@@ -16,6 +16,7 @@
 extern crate crypto;
 extern crate secp256k1;
 extern crate bitcoin;
+extern crate rand;
 
 pub mod mnemonic;
 pub mod error;

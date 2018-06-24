@@ -25,6 +25,7 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 use bitcoin::util::bip32;
+use crypto::symmetriccipher;
 
 
 /// An error class to offer a unified error interface upstream
@@ -34,7 +35,9 @@ pub enum WalletError {
     /// Network IO error
     IO(io::Error),
     /// key derivation error
-    KeyDerivation(bip32::Error)
+    KeyDerivation(bip32::Error),
+    /// cipher error
+    SymmetricCipherError(symmetriccipher::SymmetricCipherError)
 }
 
 impl Error for WalletError {
@@ -42,7 +45,11 @@ impl Error for WalletError {
         match *self {
             WalletError::Generic(ref s) => s,
             WalletError::IO(ref err) => err.description(),
-            WalletError::KeyDerivation(ref err) => err.description()
+            WalletError::KeyDerivation(ref err) => err.description(),
+            WalletError::SymmetricCipherError(ref err) => match err {
+                &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
+                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding"
+            }
         }
     }
 
@@ -50,7 +57,8 @@ impl Error for WalletError {
         match *self {
             WalletError::Generic(_) => None,
             WalletError::IO(ref err) => Some(err),
-            WalletError::KeyDerivation(ref err) => Some(err)
+            WalletError::KeyDerivation(ref err) => Some(err),
+            WalletError::SymmetricCipherError(_) => None
         }
     }
 }
@@ -62,7 +70,11 @@ impl fmt::Display for WalletError {
             // their implementations.
             WalletError::Generic(ref s) => write!(f, "Generic: {}", s),
             WalletError::IO(ref err) => write!(f, "IO error: {}", err),
-            WalletError::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err)
+            WalletError::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err),
+            WalletError::SymmetricCipherError(ref err) => write!(f, "Cipher error: {}", match err {
+                &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
+                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding"
+            })
         }
     }
 }
@@ -91,5 +103,11 @@ impl convert::From<io::Error> for WalletError {
 impl convert::From<bip32::Error> for WalletError {
     fn from(err: bip32::Error) -> WalletError {
         WalletError::KeyDerivation(err)
+    }
+}
+
+impl convert::From<symmetriccipher::SymmetricCipherError> for WalletError {
+    fn from(err: symmetriccipher::SymmetricCipherError) -> WalletError {
+        WalletError::SymmetricCipherError(err)
     }
 }

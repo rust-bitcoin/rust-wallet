@@ -19,12 +19,11 @@
 //! TREZOR compatible mnemonic in english
 //!
 use error::WalletError;
-use crypto::sha2::Sha256;
-use crypto::digest::Digest;
 use crypto::pbkdf2::pbkdf2;
 use crypto::hmac::Hmac;
 use crypto::sha2::Sha512;
-
+use crypto::sha2::Sha256;
+use crypto::digest::Digest;
 
 /// create a seed from mnemonic (optionally with salt)
 pub fn seed (mnemonic: &str, salt: &str) -> Vec<u8> {
@@ -41,7 +40,11 @@ pub fn mnemonic (data: &[u8]) -> Result<String, WalletError> {
         return Err(WalletError::Generic("Data for mnemonic should have a length divisible by 4"));
     }
     let mut check = [0u8; 32];
-    sha256(data, &mut check);
+
+    let mut sha2 = Sha256::new();
+    sha2.input(data);
+    sha2.result(&mut check);
+
     let mut bits = vec!(false; data.len() * 8 + data.len()/ 4);
     for i in 0 .. data.len () {
         for j in 0 .. 8 {
@@ -66,13 +69,6 @@ pub fn mnemonic (data: &[u8]) -> Result<String, WalletError> {
         }
     }
     Ok(memo)
-}
-
-#[inline]
-fn sha256 (data: &[u8], result: &mut [u8]) {
-    let mut sha2 = Sha256::new();
-    sha2.input(data);
-    sha2.result(result);
 }
 
 #[cfg(test)]
