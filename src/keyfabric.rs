@@ -55,7 +55,7 @@ impl KeyFabric {
         let mut encrypted_seed = [0u8; 64];
         if let Ok(mut rnd) = OsRng::new() {
             rnd.fill_bytes(&mut encrypted_seed);
-            let data = KeyFabric::decrypt_seed(&encrypted_seed, passphrase)?;
+            let data = KeyFabric::decrypt(&encrypted_seed, passphrase)?;
             let mnemonic = mnemonic::mnemonic(&data)?;
             let seed = mnemonic::seed(mnemonic.as_str(), salt);
             let key = self.master_private_key(network, seed.as_slice())?;
@@ -66,15 +66,15 @@ impl KeyFabric {
         }
     }
 
-    /// decrypt an encrypted seed (AES)
-    pub fn decrypt_seed (encrypted_seed: &[u8], passphrase: &str) -> Result<Vec<u8>, WalletError> {
+    /// decrypt an encrypted data (AES256(Sha256(passphrase), ECB, NoPadding)
+    pub fn decrypt(encrypted: &[u8], passphrase: &str) -> Result<Vec<u8>, WalletError> {
         let mut key = [0u8; 32];
-        let mut seed = vec!(0u8; encrypted_seed.len());
+        let mut seed = vec!(0u8; encrypted.len());
         let mut sha2 = Sha256::new();
         sha2.input(passphrase.as_bytes());
         sha2.result(&mut key);
         let mut decryptor = aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::NoPadding{});
-        decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted_seed),
+        decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
         &mut buffer::RefWriteBuffer::new(seed.as_mut_slice()), true)?;
         Ok(seed)
     }
