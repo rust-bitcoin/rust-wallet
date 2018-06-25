@@ -29,15 +29,15 @@ use rand::{OsRng, RngCore};
 use mnemonic::Mnemonic;
 
 /// a fabric of keys
-pub struct KeyFabric {
+pub struct KeyFactory {
     secp: Secp256k1,
     rng: OsRng
 }
 
-impl KeyFabric {
+impl KeyFactory {
     /// new key fabric
-    pub fn new() -> KeyFabric {
-        KeyFabric {
+    pub fn new() -> KeyFactory {
+        KeyFactory {
             secp: Secp256k1::new(),
             rng: OsRng::new().expect("Can not obtain random source.")
         }
@@ -106,7 +106,7 @@ mod test {
     use std::io::Read;
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
-    use keyfabric::Seed;
+    use keyfactory::Seed;
 
     extern crate rustc_serialize;
     extern crate hex;
@@ -115,7 +115,7 @@ mod test {
 
     #[test]
     fn bip32_tests () {
-        let key_fabric = super::KeyFabric::new();
+        let key_fabric = super::KeyFactory::new();
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("tests/BIP32.json");

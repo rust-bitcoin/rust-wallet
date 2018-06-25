@@ -106,7 +106,7 @@ mod test {
     use std::fs::File;
     use std::path::PathBuf;
     use std::io::Read;
-    use keyfabric::Seed;
+    use keyfactory::Seed;
 
     extern crate rustc_serialize;
     extern crate hex;

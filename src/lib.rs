@@ -20,4 +20,4 @@ extern crate rand;
 
 pub mod mnemonic;
 pub mod error;
-pub mod keyfabric;
+pub mod keyfactory;
