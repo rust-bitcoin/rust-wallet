@@ -19,60 +19,65 @@
 //! TREZOR compatible mnemonic in english
 //!
 use error::WalletError;
-use crypto::pbkdf2::pbkdf2;
-use crypto::hmac::Hmac;
-use crypto::sha2::Sha512;
 use crypto::sha2::Sha256;
 use crypto::digest::Digest;
+use crypto::aes;
+use crypto::blockmodes;
+use crypto::buffer;
 
 pub struct Mnemonic(pub String);
 
-pub struct Seed(pub Vec<u8>);
-
-/// create a seed from mnemonic (optionally with salt)
-pub fn seed (mnemonic: &Mnemonic, salt: &str) -> Seed {
-    let mut mac = Hmac::new(Sha512::new(), mnemonic.0.as_bytes());
-    let mut output = vec!(0u8; 64);
-    let msalt = "mnemonic".to_owned() + salt;
-    pbkdf2(&mut mac, msalt.as_bytes(), 2048, output.as_mut_slice());
-    Seed(output)
-}
-
-/// create a human readable mnemonic from some data
-pub fn mnemonic (data: &[u8]) -> Result<Mnemonic, WalletError> {
-    if data.len() % 4 != 0 {
-        return Err(WalletError::Generic("Data for mnemonic should have a length divisible by 4"));
+impl Mnemonic {
+    /// create a mnemonic for encrypted data
+    /// decryption algorithm: AES256(Sha256(passphrase), ECB, NoPadding
+    pub fn new (encrypted: &[u8], passphrase: &str) -> Result<Mnemonic, WalletError> {
+        let mut key = [0u8; 32];
+        let mut decrypted = vec!(0u8; encrypted.len());
+        let mut sha2 = Sha256::new();
+        sha2.input(passphrase.as_bytes());
+        sha2.result(&mut key);
+        let mut decryptor = aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::NoPadding{});
+        decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
+                          &mut buffer::RefWriteBuffer::new(decrypted.as_mut_slice()), true)?;
+        Mnemonic::mnemonic(decrypted.as_slice())
     }
-    let mut check = [0u8; 32];
 
-    let mut sha2 = Sha256::new();
-    sha2.input(data);
-    sha2.result(&mut check);
-
-    let mut bits = vec!(false; data.len() * 8 + data.len()/ 4);
-    for i in 0 .. data.len () {
-        for j in 0 .. 8 {
-            bits [i * 8 + j] = (data [i] & (1 << (7 - j))) > 0;
+    // create a mnemonic for some data
+    fn mnemonic (data: &[u8]) -> Result<Mnemonic, WalletError> {
+        if data.len() % 4 != 0 {
+            return Err(WalletError::Generic("Data for mnemonic should have a length divisible by 4"));
         }
-    }
-    for i in 0 .. data.len() / 4 {
-        bits [8 * data.len() + i] = (check [i / 8] & (1 << (7 - (i % 8)))) > 0;
-    }
-    let mlen = data.len () * 3 / 4;
-    let mut memo = String::new();
-    for i in 0 .. mlen {
-        let mut idx = 0;
-        for j in 0 .. 11 {
-            if bits [i * 11 + j] {
-                idx += 1 << (10 - j);
+        let mut check = [0u8; 32];
+
+        let mut sha2 = Sha256::new();
+        sha2.input(data);
+        sha2.result(&mut check);
+
+        let mut bits = vec!(false; data.len() * 8 + data.len()/ 4);
+        for i in 0 .. data.len () {
+            for j in 0 .. 8 {
+                bits [i * 8 + j] = (data [i] & (1 << (7 - j))) > 0;
             }
         }
-        memo += WORDS [idx];
-        if i < mlen - 1 {
-            memo += " ";
+        for i in 0 .. data.len() / 4 {
+            bits [8 * data.len() + i] = (check [i / 8] & (1 << (7 - (i % 8)))) > 0;
         }
+        let mlen = data.len () * 3 / 4;
+        let mut memo = String::new();
+        for i in 0 .. mlen {
+            let mut idx = 0;
+            for j in 0 .. 11 {
+                if bits [i * 11 + j] {
+                    idx += 1 << (10 - j);
+                }
+            }
+            memo += WORDS [idx];
+            if i < mlen - 1 {
+                memo += " ";
+            }
+        }
+        Ok(Mnemonic(memo))
     }
-    Ok(Mnemonic(memo))
 }
 
 #[cfg(test)]
@@ -80,6 +85,7 @@ mod test {
     use std::fs::File;
     use std::path::PathBuf;
     use std::io::Read;
+    use keyfabric::Seed;
 
     extern crate rustc_serialize;
     extern crate hex;
@@ -100,8 +106,8 @@ mod test {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_string().unwrap()).unwrap();
             let mnemonic = values[1].as_string().unwrap();
-            assert_eq!(mnemonic, super::mnemonic(data.as_slice()).unwrap());
-            assert_eq!(super::seed(mnemonic, "TREZOR"), decode(values[2].as_string().unwrap()).unwrap())
+            assert_eq!(mnemonic, Mnemonic::mnemonic(data.as_slice()).unwrap());
+            assert_eq!(Seed::new(mnemonic, "TREZOR"), decode(values[2].as_string().unwrap()).unwrap())
         }
     }
 }
