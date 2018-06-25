@@ -130,6 +130,9 @@ mod test {
             assert_eq!(mnemonic.to_string(), Mnemonic::mnemonic(data.as_slice()).unwrap().to_string());
             assert_eq!(Seed::new(&mnemonic, "TREZOR").data(), decode(values[2].as_string().unwrap()).unwrap());
         }
+
+        assert!(Mnemonic::from("letter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_ok());
+        assert!(Mnemonic::from("getter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_err());
     }
 }
 
