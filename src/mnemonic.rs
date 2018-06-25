@@ -21,65 +21,92 @@
 use error::WalletError;
 use crypto::sha2::Sha256;
 use crypto::digest::Digest;
-use crypto::pbkdf2::pbkdf2;
-use crypto::hmac::Hmac;
-use crypto::sha2::Sha512;
+use crypto::aes;
+use crypto::blockmodes;
+use crypto::buffer;
 
+pub struct Mnemonic(Vec<&'static str>);
 
-/// create a seed from mnemonic (optionally with salt)
-pub fn seed (mnemonic: &str, salt: &str) -> Vec<u8> {
-    let mut mac = Hmac::new(Sha512::new(), mnemonic.as_bytes());
-    let mut output = vec!(0u8; 64);
-    let msalt = "mnemonic".to_owned() + salt;
-    pbkdf2(&mut mac, msalt.as_bytes(), 2048, output.as_mut_slice());
-    output
+impl ToString for Mnemonic {
+    fn to_string(&self) -> String {
+        self.0.as_slice().join(" ")
+    }
 }
 
-/// create a human readable mnemonic from some data
-pub fn mnemonic (data: &[u8]) -> Result<String, WalletError> {
-    if data.len() % 4 != 0 {
-        return Err(WalletError::Generic("Data for mnemonic should have a length divisible by 4"));
+impl Mnemonic {
+    /// create a mnemonic for encrypted data
+    /// decryption algorithm: AES256(Sha256(passphrase), ECB, NoPadding
+    pub fn new (encrypted: &[u8], passphrase: &str) -> Result<Mnemonic, WalletError> {
+        let mut key = [0u8; 32];
+        let mut decrypted = vec!(0u8; encrypted.len());
+        let mut sha2 = Sha256::new();
+        sha2.input(passphrase.as_bytes());
+        sha2.result(&mut key);
+        let mut decryptor = aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::NoPadding{});
+        decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
+                          &mut buffer::RefWriteBuffer::new(decrypted.as_mut_slice()), true)?;
+        Mnemonic::mnemonic(decrypted.as_slice())
     }
-    let mut check = [0u8; 32];
-    sha256(data, &mut check);
-    let mut bits = vec!(false; data.len() * 8 + data.len()/ 4);
-    for i in 0 .. data.len () {
-        for j in 0 .. 8 {
-            bits [i * 8 + j] = (data [i] & (1 << (7 - j))) > 0;
+
+    pub fn from (s : &str) -> Result<Mnemonic, WalletError> {
+        let words : Vec<_> = s.split(' ').collect();
+        if words.len () < 6 || words.len() % 6 != 0 {
+            return Err(WalletError::Generic("Mnemonic must have a word count divisible with 6"));
         }
-    }
-    for i in 0 .. data.len() / 4 {
-        bits [8 * data.len() + i] = (check [i / 8] & (1 << (7 - (i % 8)))) > 0;
-    }
-    let mlen = data.len () * 3 / 4;
-    let mut memo = String::new();
-    for i in 0 .. mlen {
-        let mut idx = 0;
-        for j in 0 .. 11 {
-            if bits [i * 11 + j] {
-                idx += 1 << (10 - j);
+        let mut mnemonic = Vec::new();
+        for word in &words {
+            if let Ok(idx) = WORDS.binary_search(word) {
+                mnemonic.push(WORDS[idx]);
+            }
+            else {
+                return Err(WalletError::Generic("Mneminic contains an unknown word"));
             }
         }
-        memo += WORDS [idx];
-        if i < mlen - 1 {
-            memo += " ";
-        }
+        Ok(Mnemonic(mnemonic))
     }
-    Ok(memo)
-}
 
-#[inline]
-fn sha256 (data: &[u8], result: &mut [u8]) {
-    let mut sha2 = Sha256::new();
-    sha2.input(data);
-    sha2.result(result);
+    // create a mnemonic for some data
+    fn mnemonic (data: &[u8]) -> Result<Mnemonic, WalletError> {
+        if data.len() % 4 != 0 {
+            return Err(WalletError::Generic("Data for mnemonic should have a length divisible by 4"));
+        }
+        let mut check = [0u8; 32];
+
+        let mut sha2 = Sha256::new();
+        sha2.input(data);
+        sha2.result(&mut check);
+
+        let mut bits = vec!(false; data.len() * 8 + data.len()/ 4);
+        for i in 0 .. data.len () {
+            for j in 0 .. 8 {
+                bits [i * 8 + j] = (data [i] & (1 << (7 - j))) > 0;
+            }
+        }
+        for i in 0 .. data.len() / 4 {
+            bits [8 * data.len() + i] = (check [i / 8] & (1 << (7 - (i % 8)))) > 0;
+        }
+        let mlen = data.len () * 3 / 4;
+        let mut memo = Vec::new();
+        for i in 0 .. mlen {
+            let mut idx = 0;
+            for j in 0 .. 11 {
+                if bits [i * 11 + j] {
+                    idx += 1 << (10 - j);
+                }
+            }
+            memo.push(WORDS[idx]);
+        }
+        Ok(Mnemonic(memo))
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::fs::File;
     use std::path::PathBuf;
     use std::io::Read;
+    use keyfactory::Seed;
 
     extern crate rustc_serialize;
     extern crate hex;
@@ -99,10 +126,13 @@ mod test {
         for t in 0 .. tests.len() {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_string().unwrap()).unwrap();
-            let mnemonic = values[1].as_string().unwrap();
-            assert_eq!(mnemonic, super::mnemonic(data.as_slice()).unwrap());
-            assert_eq!(super::seed(mnemonic, "TREZOR"), decode(values[2].as_string().unwrap()).unwrap())
+            let mnemonic = Mnemonic::from(values[1].as_string().unwrap()).unwrap();
+            assert_eq!(mnemonic.to_string(), Mnemonic::mnemonic(data.as_slice()).unwrap().to_string());
+            assert_eq!(Seed::new(&mnemonic, "TREZOR").data(), decode(values[2].as_string().unwrap()).unwrap());
         }
+
+        assert!(Mnemonic::from("letter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_ok());
+        assert!(Mnemonic::from("getter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_err());
     }
 }
 

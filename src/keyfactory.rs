@@ -22,23 +22,40 @@ use bitcoin::network::constants::Network;
 use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
 use secp256k1::Secp256k1;
 use error::WalletError;
+use crypto::pbkdf2::pbkdf2;
+use crypto::hmac::Hmac;
+use crypto::sha2::Sha512;
+use rand::{OsRng, RngCore};
+use mnemonic::Mnemonic;
 
 /// a fabric of keys
-pub struct KeyFabric {
-    secp: Secp256k1
+pub struct KeyFactory {
+    secp: Secp256k1,
+    rng: OsRng
 }
 
-impl KeyFabric {
+impl KeyFactory {
     /// new key fabric
-    pub fn new() -> KeyFabric {
-        KeyFabric {
-            secp: Secp256k1::new()
+    pub fn new() -> KeyFactory {
+        KeyFactory {
+            secp: Secp256k1::new(),
+            rng: OsRng::new().expect("Can not obtain random source.")
         }
     }
 
-    /// create a master private key from a seed
-    pub fn master_private_key(&self, network: Network, seed: &[u8]) -> Result<ExtendedPrivKey, WalletError> {
-        Ok(ExtendedPrivKey::new_master (&self.secp, network, seed)?)
+    /// create a new random master private key
+    pub fn new_master_private_key (&mut self, entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>), WalletError> {
+        let mut encrypted = vec!(0u8; entropy as usize);
+        self.rng.fill_bytes(encrypted.as_mut_slice());
+        let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
+        let seed = Seed::new(&mnemonic, salt);
+        let key = self.master_private_key(network, &seed)?;
+        Ok((key, mnemonic, encrypted))
+    }
+
+    /// create a master private key from seed
+    pub fn master_private_key(&self, network: Network, seed: &Seed) -> Result<ExtendedPrivKey, WalletError> {
+        Ok(ExtendedPrivKey::new_master (&self.secp, network, &seed.0)?)
     }
 
     /// get extended public key for a known private key
@@ -55,6 +72,33 @@ impl KeyFabric {
     }
 }
 
+#[derive(Copy, Clone)]
+pub enum MasterKeyEntropy {
+    Low = 16,
+    Recommended = 32,
+    Paranoid = 64
+}
+
+pub struct Seed(Vec<u8>);
+
+impl Seed {
+    // return a copy of the seed data
+    pub fn data (&self) -> Vec<u8> {
+        self.0.clone()
+    }
+}
+
+impl Seed {
+    /// create a seed from mnemonic (optionally with salt)
+    pub fn new(mnemonic: &Mnemonic, salt: &str) -> Seed {
+        let mut mac = Hmac::new(Sha512::new(), mnemonic.to_string().as_bytes());
+        let mut output = [0u8; 64];
+        let msalt = "mnemonic".to_owned() + salt;
+        pbkdf2(&mut mac, msalt.as_bytes(), 2048, &mut output);
+        Seed(output.to_vec())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::fs::File;
@@ -62,7 +106,7 @@ mod test {
     use std::io::Read;
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
-
+    use keyfactory::Seed;
 
     extern crate rustc_serialize;
     extern crate hex;
@@ -71,7 +115,7 @@ mod test {
 
     #[test]
     fn bip32_tests () {
-        let key_fabric = super::KeyFabric::new();
+        let key_fabric = super::KeyFactory::new();
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("tests/BIP32.json");
@@ -81,7 +125,7 @@ mod test {
         let json = Json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
         for test in tests {
-            let seed = decode(test["seed"].as_string().unwrap()).unwrap();
+            let seed = Seed(decode(test["seed"].as_string().unwrap()).unwrap());
             let master_private = key_fabric.master_private_key(Network::Bitcoin, &seed).unwrap();
             assert_eq!(test["private"].as_string().unwrap(), master_private.to_string());
             assert_eq!(test["public"].as_string().unwrap(), key_fabric.extended_public_from_private(&master_private).to_string());
