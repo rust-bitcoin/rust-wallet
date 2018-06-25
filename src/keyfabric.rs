@@ -34,26 +34,6 @@ pub struct KeyFabric {
     rng: OsRng
 }
 
-#[derive(Copy, Clone)]
-pub enum MasterKeyEntropy {
-    Low = 16,
-    Recommended = 32,
-    Paranoid = 64
-}
-pub struct Seed([u8; 64]);
-
-impl Seed {
-    pub fn new(mnemonic: &Mnemonic, salt: &str) -> Seed {
-        let mut mac = Hmac::new(Sha512::new(), mnemonic.0.as_bytes());
-        let mut output = [0u8; 64];
-        let msalt = "mnemonic".to_owned() + salt;
-        pbkdf2(&mut mac, msalt.as_bytes(), 2048, &mut output);
-        Seed(output)
-    }
-}
-
-
-/// create a seed from mnemonic (optionally with salt)
 impl KeyFabric {
     /// new key fabric
     pub fn new() -> KeyFabric {
@@ -92,6 +72,33 @@ impl KeyFabric {
     }
 }
 
+#[derive(Copy, Clone)]
+pub enum MasterKeyEntropy {
+    Low = 16,
+    Recommended = 32,
+    Paranoid = 64
+}
+
+pub struct Seed(Vec<u8>);
+
+impl Seed {
+    // return a copy of the seed data
+    pub fn data (&self) -> Vec<u8> {
+        self.0.clone()
+    }
+}
+
+impl Seed {
+    /// create a seed from mnemonic (optionally with salt)
+    pub fn new(mnemonic: &Mnemonic, salt: &str) -> Seed {
+        let mut mac = Hmac::new(Sha512::new(), mnemonic.to_string().as_bytes());
+        let mut output = [0u8; 64];
+        let msalt = "mnemonic".to_owned() + salt;
+        pbkdf2(&mut mac, msalt.as_bytes(), 2048, &mut output);
+        Seed(output.to_vec())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::fs::File;
@@ -99,7 +106,7 @@ mod test {
     use std::io::Read;
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
-
+    use keyfabric::Seed;
 
     extern crate rustc_serialize;
     extern crate hex;
@@ -118,7 +125,7 @@ mod test {
         let json = Json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
         for test in tests {
-            let seed = decode(test["seed"].as_string().unwrap()).unwrap();
+            let seed = Seed(decode(test["seed"].as_string().unwrap()).unwrap());
             let master_private = key_fabric.master_private_key(Network::Bitcoin, &seed).unwrap();
             assert_eq!(test["private"].as_string().unwrap(), master_private.to_string());
             assert_eq!(test["public"].as_string().unwrap(), key_fabric.extended_public_from_private(&master_private).to_string());

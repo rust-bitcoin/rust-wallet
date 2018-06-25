@@ -25,7 +25,13 @@ use crypto::aes;
 use crypto::blockmodes;
 use crypto::buffer;
 
-pub struct Mnemonic(pub String);
+pub struct Mnemonic(Vec<&'static str>);
+
+impl ToString for Mnemonic {
+    fn to_string(&self) -> String {
+        self.0.as_slice().join(" ")
+    }
+}
 
 impl Mnemonic {
     /// create a mnemonic for encrypted data
@@ -40,6 +46,23 @@ impl Mnemonic {
         decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
                           &mut buffer::RefWriteBuffer::new(decrypted.as_mut_slice()), true)?;
         Mnemonic::mnemonic(decrypted.as_slice())
+    }
+
+    pub fn from (s : &str) -> Result<Mnemonic, WalletError> {
+        let words : Vec<_> = s.split(' ').collect();
+        if words.len () < 6 || words.len() % 6 != 0 {
+            return Err(WalletError::Generic("Mnemonic must have a word count divisible with 6"));
+        }
+        let mut mnemonic = Vec::new();
+        for word in &words {
+            if let Ok(idx) = WORDS.binary_search(word) {
+                mnemonic.push(WORDS[idx]);
+            }
+            else {
+                return Err(WalletError::Generic("Mneminic contains an unknown word"));
+            }
+        }
+        Ok(Mnemonic(mnemonic))
     }
 
     // create a mnemonic for some data
@@ -63,7 +86,7 @@ impl Mnemonic {
             bits [8 * data.len() + i] = (check [i / 8] & (1 << (7 - (i % 8)))) > 0;
         }
         let mlen = data.len () * 3 / 4;
-        let mut memo = String::new();
+        let mut memo = Vec::new();
         for i in 0 .. mlen {
             let mut idx = 0;
             for j in 0 .. 11 {
@@ -71,10 +94,7 @@ impl Mnemonic {
                     idx += 1 << (10 - j);
                 }
             }
-            memo += WORDS [idx];
-            if i < mlen - 1 {
-                memo += " ";
-            }
+            memo.push(WORDS[idx]);
         }
         Ok(Mnemonic(memo))
     }
@@ -82,6 +102,7 @@ impl Mnemonic {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::fs::File;
     use std::path::PathBuf;
     use std::io::Read;
@@ -105,9 +126,9 @@ mod test {
         for t in 0 .. tests.len() {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_string().unwrap()).unwrap();
-            let mnemonic = values[1].as_string().unwrap();
-            assert_eq!(mnemonic, Mnemonic::mnemonic(data.as_slice()).unwrap());
-            assert_eq!(Seed::new(mnemonic, "TREZOR"), decode(values[2].as_string().unwrap()).unwrap())
+            let mnemonic = Mnemonic::from(values[1].as_string().unwrap()).unwrap();
+            assert_eq!(mnemonic.to_string(), Mnemonic::mnemonic(data.as_slice()).unwrap().to_string());
+            assert_eq!(Seed::new(&mnemonic, "TREZOR").data(), decode(values[2].as_string().unwrap()).unwrap());
         }
     }
 }
