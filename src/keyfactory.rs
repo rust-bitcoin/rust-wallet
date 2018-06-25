@@ -30,27 +30,28 @@ use mnemonic::Mnemonic;
 
 /// a fabric of keys
 pub struct KeyFactory {
-    secp: Secp256k1,
-    rng: OsRng
+    secp: Secp256k1
 }
 
 impl KeyFactory {
     /// new key fabric
     pub fn new() -> KeyFactory {
         KeyFactory {
-            secp: Secp256k1::new(),
-            rng: OsRng::new().expect("Can not obtain random source.")
+            secp: Secp256k1::new()
         }
     }
 
     /// create a new random master private key
-    pub fn new_master_private_key (&mut self, entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>), WalletError> {
+    pub fn new_master_private_key (&self, entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>), WalletError> {
         let mut encrypted = vec!(0u8; entropy as usize);
-        self.rng.fill_bytes(encrypted.as_mut_slice());
-        let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
-        let seed = Seed::new(&mnemonic, salt);
-        let key = self.master_private_key(network, &seed)?;
-        Ok((key, mnemonic, encrypted))
+        if let Ok(mut rng) = OsRng::new() {
+            rng.fill_bytes(encrypted.as_mut_slice());
+            let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
+            let seed = Seed::new(&mnemonic, salt);
+            let key = self.master_private_key(network, &seed)?;
+            return Ok((key, mnemonic, encrypted))
+        }
+        Err(WalletError::Generic("can not obtain random source"))
     }
 
     /// create a master private key from seed

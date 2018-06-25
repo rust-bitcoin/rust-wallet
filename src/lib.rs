@@ -21,3 +21,5 @@ extern crate rand;
 pub mod mnemonic;
 pub mod error;
 pub mod keyfactory;
+pub mod accountfactory;
+pub mod account;
