@@ -73,7 +73,7 @@ impl AccountFactory {
     pub fn account (&self, account_number: u32, address_type: AccountAddressType) -> Result<Account, WalletError> {
         let mut key = match address_type {
             AccountAddressType::P2PKH => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened(44))?,
-            AccountAddressType::P2SHWH => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened(48))?
+            AccountAddressType::P2SHWH => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened(49))?
         };
         key = match key.network {
             Network::Bitcoin => self.key_factory.private_child(&key, ChildNumber::Hardened(0))?,
