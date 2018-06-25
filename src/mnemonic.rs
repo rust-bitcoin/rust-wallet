@@ -25,17 +25,21 @@ use crypto::sha2::Sha512;
 use crypto::sha2::Sha256;
 use crypto::digest::Digest;
 
+pub struct Mnemonic(pub String);
+
+pub struct Seed(pub Vec<u8>);
+
 /// create a seed from mnemonic (optionally with salt)
-pub fn seed (mnemonic: &str, salt: &str) -> Vec<u8> {
-    let mut mac = Hmac::new(Sha512::new(), mnemonic.as_bytes());
+pub fn seed (mnemonic: &Mnemonic, salt: &str) -> Seed {
+    let mut mac = Hmac::new(Sha512::new(), mnemonic.0.as_bytes());
     let mut output = vec!(0u8; 64);
     let msalt = "mnemonic".to_owned() + salt;
     pbkdf2(&mut mac, msalt.as_bytes(), 2048, output.as_mut_slice());
-    output
+    Seed(output)
 }
 
 /// create a human readable mnemonic from some data
-pub fn mnemonic (data: &[u8]) -> Result<String, WalletError> {
+pub fn mnemonic (data: &[u8]) -> Result<Mnemonic, WalletError> {
     if data.len() % 4 != 0 {
         return Err(WalletError::Generic("Data for mnemonic should have a length divisible by 4"));
     }
@@ -68,7 +72,7 @@ pub fn mnemonic (data: &[u8]) -> Result<String, WalletError> {
             memo += " ";
         }
     }
-    Ok(memo)
+    Ok(Mnemonic(memo))
 }
 
 #[cfg(test)]

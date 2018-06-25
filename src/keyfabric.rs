@@ -29,59 +29,48 @@ use crypto::sha2::Sha256;
 use crypto::digest::Digest;
 use rand::{OsRng, RngCore};
 use mnemonic;
+use mnemonic::{Mnemonic, Seed};
 
 /// a fabric of keys
 pub struct KeyFabric {
-    secp: Secp256k1
+    secp: Secp256k1,
+    rng: OsRng
+}
+
+#[derive(Copy, Clone)]
+pub enum MasterKeyEntropy {
+    Normal = 16,
+    High = 32,
+    Paranoid = 64
 }
 
 impl KeyFabric {
     /// new key fabric
     pub fn new() -> KeyFabric {
         KeyFabric {
-            secp: Secp256k1::new()
+            secp: Secp256k1::new(),
+            rng: OsRng::new().expect("Can not obtain random source.")
         }
     }
 
-    ///
-    /// Generate new random master private key as follows:
-    /// 1. get random 64 bytes from OS and consider it as encrypted data for persistent storage.
-    /// 2. decrypt encrypted data using Sha256 hashed passphrase as key with AES ECB NoPadding
-    /// 3. generate human readable mnemonic out of decrypted data
-    /// 4. generate seed from mnemonic with PBKDF2(Hmac(SHA512), 2048 iterations, salt)
-    /// 5. create BIP32 extended private from seed
-    ///
-    pub fn new_master_private_key (&self, passphrase: &str, salt: &str, network: Network) -> Result<(ExtendedPrivKey, String, Vec<u8>), WalletError> {
-        let mut encrypted_seed = [0u8; 64];
-        if let Ok(mut rnd) = OsRng::new() {
-            rnd.fill_bytes(&mut encrypted_seed);
-            let data = KeyFabric::decrypt(&encrypted_seed, passphrase)?;
-            let mnemonic = mnemonic::mnemonic(&data)?;
-            let seed = mnemonic::seed(mnemonic.as_str(), salt);
-            let key = self.master_private_key(network, seed.as_slice())?;
-            Ok((key, mnemonic, encrypted_seed.to_vec()))
-        }
-        else {
-            Err(WalletError::Generic("can not obtain random source"))
-        }
+    /// Generate a random new encrypted seed
+    pub fn new_encrypted_seed (&mut self, entropy: MasterKeyEntropy) -> Vec<u8> {
+        let mut rnd = vec!(0u8; entropy as usize);
+        self.rng.fill_bytes(&mut rnd);
+        rnd
     }
 
-    /// decrypt an encrypted data (AES256(Sha256(passphrase), ECB, NoPadding)
-    pub fn decrypt(encrypted: &[u8], passphrase: &str) -> Result<Vec<u8>, WalletError> {
-        let mut key = [0u8; 32];
-        let mut seed = vec!(0u8; encrypted.len());
-        let mut sha2 = Sha256::new();
-        sha2.input(passphrase.as_bytes());
-        sha2.result(&mut key);
-        let mut decryptor = aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::NoPadding{});
-        decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
-        &mut buffer::RefWriteBuffer::new(seed.as_mut_slice()), true)?;
-        Ok(seed)
+    /// Decrypt and return human readable mnemonic and decrypted seed
+    pub fn decrypt_seed (&self, encrypted_seed: &[u8], passphrase: &str, salt: &str) -> Result<(Mnemonic, Seed), WalletError> {
+        let data = decrypt(&encrypted_seed, passphrase)?;
+        let mnemonic = mnemonic::mnemonic(&data)?;
+        let seed = mnemonic::seed(&mnemonic, salt);
+        Ok((mnemonic, seed))
     }
 
-    /// create a master private key from a seed
-    pub fn master_private_key(&self, network: Network, seed: &[u8]) -> Result<ExtendedPrivKey, WalletError> {
-        Ok(ExtendedPrivKey::new_master (&self.secp, network, seed)?)
+    /// create a master private key from seed
+    pub fn master_private_key(&self, network: Network, seed: &Seed) -> Result<ExtendedPrivKey, WalletError> {
+        Ok(ExtendedPrivKey::new_master (&self.secp, network, seed.0.as_slice())?)
     }
 
     /// get extended public key for a known private key
@@ -96,6 +85,19 @@ impl KeyFabric {
     pub fn public_child (&self, extended_public_key: &ExtendedPubKey, child: ChildNumber) -> Result<ExtendedPubKey, WalletError> {
         Ok(extended_public_key.ckd_pub(&self.secp, child)?)
     }
+}
+
+// decrypt an encrypted data (AES256(Sha256(passphrase), ECB, NoPadding)
+fn decrypt(encrypted: &[u8], passphrase: &str) -> Result<Vec<u8>, WalletError> {
+    let mut key = [0u8; 32];
+    let mut seed = vec!(0u8; encrypted.len());
+    let mut sha2 = Sha256::new();
+    sha2.input(passphrase.as_bytes());
+    sha2.result(&mut key);
+    let mut decryptor = aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::NoPadding{});
+    decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
+                      &mut buffer::RefWriteBuffer::new(seed.as_mut_slice()), true)?;
+    Ok(seed)
 }
 
 #[cfg(test)]
