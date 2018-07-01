@@ -1,5 +1,12 @@
 # Bitcoin Wallet Library in Rust
-This is a library to build Bitcoin wallets with Rust
+This is a library to build Bitcoin wallets with Rust. 
+It uses BIP32 key derivation, BIP39 mnemonics and BIP44 key 
+hierarchy which makes it compatible to TREZOR, Ledger and many other
+wallets.
+
+## Goal
+Offer a standalone wallet in conjunction with rust-bitcoin-spv.
+I plan to add TREZOR and Ledger support.
 
 ## Status
 This is work in progess, far from production quality. 
