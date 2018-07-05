@@ -107,11 +107,15 @@ mod test {
     use std::path::PathBuf;
     use std::io::Read;
     use keyfactory::Seed;
+    use bitcoin::network::constants::Network;
 
     extern crate rustc_serialize;
     extern crate hex;
     use self::rustc_serialize::json::Json;
     use self::hex::decode;
+    use keyfactory::MasterKeyEntropy;
+    use keyfactory::KeyFactory;
+    use bitcoin::util::bip32::ChildNumber;
 
     #[test]
     fn test_mnemonic () {
@@ -123,18 +127,35 @@ mod test {
 
         let json = Json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
+
+        let mut key_factory: KeyFactory = KeyFactory::new();
+        let mut pkTestCount = 0;
+
         for t in 0 .. tests.len() {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_string().unwrap()).unwrap();
             let mnemonic = Mnemonic::from(values[1].as_string().unwrap()).unwrap();
+            let seed = Seed::new(&mnemonic, "TREZOR");
             assert_eq!(mnemonic.to_string(), Mnemonic::mnemonic(data.as_slice()).unwrap().to_string());
-            assert_eq!(Seed::new(&mnemonic, "TREZOR").data(), decode(values[2].as_string().unwrap()).unwrap());
+            assert_eq!(seed.data(), decode(values[2].as_string().unwrap()).unwrap());
+
+            if values.len() == 4 {
+                let pk = values[3].as_string().unwrap();
+
+                let private_key = KeyFactory::master_private_key(&key_factory ,Network::Bitcoin, &seed).unwrap();
+                let mut key = private_key.clone();
+
+                assert_eq!(key.to_string(), pk);
+                pkTestCount += 1;
+            }
         }
+        assert_eq!(pkTestCount, 24); // 24 test cases with private key
 
         assert!(Mnemonic::from("letter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_ok());
         assert!(Mnemonic::from("getter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_err());
     }
 }
+
 
 
 const WORDS: [&str; 2048] = [
