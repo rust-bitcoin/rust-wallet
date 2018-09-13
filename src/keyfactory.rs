@@ -30,14 +30,14 @@ use mnemonic::Mnemonic;
 
 /// a fabric of keys
 pub struct KeyFactory {
-    secp: Secp256k1
+    // secp: Secp256k1,
 }
 
 impl KeyFactory {
     /// new key fabric
     pub fn new() -> KeyFactory {
         KeyFactory {
-            secp: Secp256k1::new()
+            // secp: Secp256k1::new(),
         }
     }
 
@@ -54,22 +54,33 @@ impl KeyFactory {
         Err(WalletError::Generic("can not obtain random source"))
     }
 
+    /// create a new master private key for debug/test purposes
+    pub fn new_master_private_key_no_random(&self, entropy: MasterKeyEntropy, network: Network,
+        passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>, Vec<u8>), WalletError> {
+
+        let encrypted = vec!(0u8; entropy as usize);
+        let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
+        let seed = Seed::new(&mnemonic, salt);
+        let key = self.master_private_key(network, &seed)?;
+        return Ok((key, mnemonic, encrypted, seed.data()))
+    }
+
     /// create a master private key from seed
     pub fn master_private_key(&self, network: Network, seed: &Seed) -> Result<ExtendedPrivKey, WalletError> {
-        Ok(ExtendedPrivKey::new_master (&self.secp, network, &seed.0)?)
+        Ok(ExtendedPrivKey::new_master (&Secp256k1::new(), network, &seed.0)?)
     }
 
     /// get extended public key for a known private key
     pub fn extended_public_from_private(&self, extended_private_key: &ExtendedPrivKey) -> ExtendedPubKey {
-        ExtendedPubKey::from_private(&self.secp, extended_private_key)
+        ExtendedPubKey::from_private(&Secp256k1::new(), extended_private_key)
     }
 
     pub fn private_child (&self, extended_private_key: &ExtendedPrivKey, child: ChildNumber) -> Result<ExtendedPrivKey, WalletError> {
-        Ok(extended_private_key.ckd_priv(&self.secp, child)?)
+        Ok(extended_private_key.ckd_priv(&Secp256k1::new(), child)?)
     }
 
     pub fn public_child (&self, extended_public_key: &ExtendedPubKey, child: ChildNumber) -> Result<ExtendedPubKey, WalletError> {
-        Ok(extended_public_key.ckd_pub(&self.secp, child)?)
+        Ok(extended_public_key.ckd_pub(&Secp256k1::new(), child)?)
     }
 }
 
@@ -136,9 +147,9 @@ mod test {
                     let sequence = l ["sequence"].as_u64().unwrap();
                     let private = l ["private"].as_boolean().unwrap();
                     let child = if private {
-                        ChildNumber::Hardened(sequence as u32)
+                        ChildNumber::Hardened{index: sequence as u32}
                     } else {
-                        ChildNumber::Normal(sequence as u32)
+                        ChildNumber::Normal{index: sequence as u32}
                     };
                     key = key_fabric.private_child(&key.clone(), child).unwrap();
                 }

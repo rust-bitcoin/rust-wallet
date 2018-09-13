@@ -113,9 +113,7 @@ mod test {
     extern crate hex;
     use self::rustc_serialize::json::Json;
     use self::hex::decode;
-    use keyfactory::MasterKeyEntropy;
     use keyfactory::KeyFactory;
-    use bitcoin::util::bip32::ChildNumber;
 
     #[test]
     fn test_mnemonic () {
@@ -128,8 +126,8 @@ mod test {
         let json = Json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
 
-        let mut key_factory: KeyFactory = KeyFactory::new();
-        let mut pkTestCount = 0;
+        let key_factory: KeyFactory = KeyFactory::new();
+        let mut pk_test_count = 0;
 
         for t in 0 .. tests.len() {
             let values = tests[t].as_array().unwrap();
@@ -146,10 +144,10 @@ mod test {
                 let mut key = private_key.clone();
 
                 assert_eq!(key.to_string(), pk);
-                pkTestCount += 1;
+                pk_test_count += 1;
             }
         }
-        assert_eq!(pkTestCount, 24); // 24 test cases with private key
+        assert_eq!(pk_test_count, 24); // 24 test cases with private key
 
         assert!(Mnemonic::from("letter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_ok());
         assert!(Mnemonic::from("getter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_err());

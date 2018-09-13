@@ -17,6 +17,9 @@ extern crate crypto;
 extern crate secp256k1;
 extern crate bitcoin;
 extern crate rand;
+extern crate hex;
+extern crate bitcoin_rpc_client;
+extern crate bitcoin_bech32;
 
 pub mod mnemonic;
 pub mod error;
