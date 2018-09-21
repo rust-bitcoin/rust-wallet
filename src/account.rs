@@ -22,6 +22,7 @@ use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
 use bitcoin::util::address::Address;
 use bitcoin::network::constants::Network;
 use bitcoin::blockdata::script::Script;
+use bitcoin::blockdata::transaction::OutPoint;
 use std::sync::Arc;
 use std::error::Error;
 use std::rc::Rc;
@@ -31,7 +32,7 @@ use keyfactory::KeyFactory;
 use secp256k1::{Secp256k1, SecretKey, PublicKey};
 
 /// Address type an account is using
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum AccountAddressType {
     /// pay to public key hash (aka. legacy)
     P2PKH,
@@ -41,13 +42,13 @@ pub enum AccountAddressType {
     P2WKH,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AddressChain {
     External,
     Internal,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyPath {
     addr_chain: AddressChain,
     addr_index: u32,
@@ -62,17 +63,25 @@ impl KeyPath {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Utxo {
-    value: u64,
-    key_path: KeyPath,
+    pub value: u64,
+    pub key_path: KeyPath,
+    pub out_point: OutPoint,
+    pub account_index: u32,
+    pub pk_script: Script,
+    pub addr_type: AccountAddressType,
 }
 
 impl Utxo {
-    pub fn new(value: u64, key_path: KeyPath) -> Self {
+    pub fn new(value: u64, key_path: KeyPath, out_point: OutPoint, account_index: u32, pk_script: Script, addr_type: AccountAddressType) -> Self {
         Self {
             value,
             key_path,
+            out_point,
+            account_index,
+            pk_script,
+            addr_type,
         }
     }
 }
@@ -111,6 +120,13 @@ impl Account {
             internal_pk_list: Vec::new(),
 
             utxo_list: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    pub fn get_sk(&self, key_path: &KeyPath) -> SecretKey {
+        match key_path.addr_chain {
+            AddressChain::External => self.external_sk_list[key_path.addr_index as usize],
+            AddressChain::Internal => self.internal_sk_list[key_path.addr_index as usize],
         }
     }
 

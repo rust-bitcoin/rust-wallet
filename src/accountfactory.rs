@@ -21,14 +21,23 @@
 
 use bitcoin::network::constants::Network;
 use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
-use bitcoin::blockdata::transaction::Transaction as BitcoinTransaction;
+use bitcoin::util::bip143;
+use bitcoin::util::hash::Sha256dHash;
+use bitcoin::util::address::Address;
+use bitcoin::util::hash::Hash160;
+use bitcoin::blockdata::transaction::{OutPoint, Transaction as BitcoinTransaction, TxIn, TxOut};
+use bitcoin::blockdata::script::{Script, Builder};
+use bitcoin::BitcoinHash;
 use keyfactory::{KeyFactory, MasterKeyEntropy, Seed};
 use error::WalletError;
 use mnemonic::Mnemonic;
 use account::{Account,AccountAddressType,Utxo,KeyPath,AddressChain};
+use secp256k1::{Secp256k1, PublicKey, Message};
 use std::sync::Arc;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::str::FromStr;
 
 use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, SerializedRawTransaction};
 
@@ -67,6 +76,7 @@ pub struct AccountFactory {
     account_list: Vec<Rc<RefCell<Account>>>,
     network: Network,
     cfg: BitcoindConfig,
+    op_to_utxo: HashMap<OutPoint, Utxo>,
 }
 
 impl AccountFactory {
@@ -82,6 +92,7 @@ impl AccountFactory {
             account_list: Vec::new(),
             network,
             cfg,
+            op_to_utxo: HashMap::new(),
         })
     }
 
@@ -97,6 +108,7 @@ impl AccountFactory {
             account_list: Vec::new(),
             network,
             cfg,
+            op_to_utxo: HashMap::new(),
         })
     }
 
@@ -113,6 +125,7 @@ impl AccountFactory {
             account_list: Vec::new(),
             network,
             cfg,
+            op_to_utxo: HashMap::new(),
         })
     }
 
@@ -154,8 +167,131 @@ impl AccountFactory {
         Ok(account)
     }
 
+    pub fn get_utxo_list(&self) -> Vec<Utxo> {
+        let mut joined = Vec::new();
+        for account in &self.account_list {
+            let account_utxo_list = &account.borrow_mut().get_utxo_list();
+            joined.extend_from_slice(&*account_utxo_list.borrow_mut());
+        }
+        joined
+    }
+
+    // TODO(evg): add version, lock_time param?
+    pub fn make_tx(&self, ops: Vec<OutPoint>, addr_str: String) -> BitcoinTransaction {
+        let addr: Address = Address::from_str(&addr_str).unwrap();
+
+        let mut tx = BitcoinTransaction {
+            version:   0,
+            lock_time: 0,
+            input:     Vec::new(),
+            output:    Vec::new(),
+        };
+
+        let mut total = 0;
+        for op in &ops {
+            let utxo = self.op_to_utxo.get(op).unwrap();
+            total += utxo.value;
+
+            let input = TxIn{
+                previous_output: *op,
+                script_sig:      Script::new(),
+                sequence:        0xFFFFFFFF,
+                witness:         Vec::new(),
+            };
+            tx.input.push(input);
+        }
+
+        let output = TxOut{
+            value: total - 10_000, // subtract fee
+            script_pubkey: addr.script_pubkey(),
+        };
+        tx.output.push(output);
+
+        // sign tx
+        for i in 0..ops.len() {
+            let op = &ops[i];
+            let utxo = self.op_to_utxo.get(op).unwrap();
+
+            let account = self.account_list[utxo.account_index as usize].borrow_mut();
+
+            let ctx = Secp256k1::new();
+            let sk = account.get_sk(&utxo.key_path);
+            let pk = PublicKey::from_secret_key(&ctx, &sk);
+
+            // TODO(evg): do not hardcode bitcoin's network param
+            match utxo.addr_type {
+                AccountAddressType::P2PKH => {
+                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
+
+                    // TODO(evg): use SigHashType enum
+                    let signature = ctx.sign(
+                        &Message::from(tx.signature_hash(i, &pk_script, 0x1).into_bytes()),
+                        &sk,
+                    );
+
+                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    serialized_sig.push(0x1);
+
+                    let script = Builder::new()
+                        .push_slice(serialized_sig.as_slice())
+                        .push_slice(&pk.serialize())
+                        .into_script();
+                    tx.input[i].script_sig = script;
+                },
+                AccountAddressType::P2SHWH => {
+                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
+                    let pk_script_p2wpkh = Address::p2wpkh(&pk, Network::Bitcoin).script_pubkey();
+
+                    let tx_sig_hash = bip143::SighashComponents::new(&tx).
+                        sighash_all(
+                            &tx.input[i],
+                            &pk_script,
+                            utxo.value,
+                        );
+
+                    let signature = ctx.sign(
+                        &Message::from(tx_sig_hash.into_bytes()),
+                        &sk,
+                    );
+
+                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    serialized_sig.push(0x1);
+
+                    tx.input[i].witness.push(serialized_sig);
+                    tx.input[i].witness.push(pk.serialize().to_vec());
+
+                    tx.input[i].script_sig = Builder::new()
+                        .push_slice(pk_script_p2wpkh.as_bytes())
+                        .into_script();
+                },
+                AccountAddressType::P2WKH => {
+                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
+
+                    let tx_sig_hash = bip143::SighashComponents::new(&tx).
+                        sighash_all(
+                            &tx.input[i],
+                            &pk_script,
+                            utxo.value,
+                        );
+
+                    let signature = ctx.sign(
+                        &Message::from(tx_sig_hash.into_bytes()),
+                        &sk,
+                    );
+
+                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    serialized_sig.push(0x1);
+
+                    tx.input[i].witness.push(serialized_sig);
+                    tx.input[i].witness.push(pk.serialize().to_vec());
+                }
+            }
+        }
+        tx
+    }
+
     // TODO(evg): impl error handling
-    pub fn sync_with_blockchain(&self) {
+    pub fn sync_with_blockchain(&mut self) {
         let client = BitcoinCoreClient::new(&self.cfg.url, &self.cfg.user, &self.cfg.password);
 
         let block_height = client.get_block_count()
@@ -173,27 +309,50 @@ impl AccountFactory {
                 .unwrap();
 
             for txid in block.tx {
-                let tx = client.get_transaction(&txid)
+                let tx_hex = client.get_raw_transaction_serialized(&txid)
                     .unwrap()
                     .unwrap();
-                let tx_hex: SerializedRawTransaction = tx.hex;
                 let tx: BitcoinTransaction = BitcoinTransaction::from(tx_hex);
 
-                for account in &self.account_list {
-                    let account = account.borrow_mut();
-                    for output in &tx.output {
+                for account_index in 0..self.account_list.len() {
+                    let account = self.account_list[account_index].borrow_mut();
+                    for output_index in 0..tx.output.len() {
+                        let output = &tx.output[output_index];
                         let actual= &output.script_pubkey.to_bytes();
                         let mut joined = account.external_pk_list.clone();
                         joined.extend_from_slice(&account.internal_pk_list);
 
+                        // TODO(evg): something better?
+                        let get_pk_index = |mut raw: usize| -> (usize, AddressChain) {
+                            let len = account.external_pk_list.len();
+                            let mut addr_chain = AddressChain::External;
+                            if raw >= len {
+                                raw -= len;
+                                addr_chain = AddressChain::Internal;
+                            }
+                            (raw, addr_chain)
+                        };
+
+                        let op = OutPoint{
+                            txid: txid.clone().into(),
+                            vout: output_index as u32,
+                        };
+
                         if output.script_pubkey.is_p2pkh() && account.address_type == AccountAddressType::P2PKH {
+                            // TODO(evg): use correct index
                             for pk_index in 0..joined.len() {
                                 let pk = &joined[pk_index];
                                 let script = account.script_from_pk(pk);
                                 let expected = &script.to_bytes();
                                 if actual == expected {
-                                    let key_path = KeyPath::new(AddressChain::External, pk_index as u32);
-                                    account.grab_utxo(Utxo::new(output.value, key_path));
+                                    let cache = get_pk_index(pk_index);
+                                    let key_path = KeyPath::new(cache.1, cache.0 as u32);
+
+                                    let utxo = Utxo::new(output.value, key_path, op,
+                                        account_index as u32, script, AccountAddressType::P2PKH);
+
+                                    account.grab_utxo(utxo.clone());
+                                    self.op_to_utxo.insert(op, utxo);
                                 }
                             }
                         }
@@ -204,8 +363,14 @@ impl AccountFactory {
                                 let script = account.script_from_pk(pk);
                                 let expected = &script.to_bytes();
                                 if actual == expected {
-                                    let key_path = KeyPath::new(AddressChain::External, pk_index as u32);
-                                    account.grab_utxo(Utxo::new(output.value, key_path));
+                                    let cache = get_pk_index(pk_index);
+                                    let key_path = KeyPath::new(cache.1, cache.0 as u32);
+
+                                    let utxo = Utxo::new(output.value, key_path, op,
+                                        account_index as u32, script, AccountAddressType::P2SHWH);
+
+                                    account.grab_utxo(utxo.clone());
+                                    self.op_to_utxo.insert(op, utxo);
                                 }
                             }
                         }
@@ -216,8 +381,14 @@ impl AccountFactory {
                                 let script = account.script_from_pk(pk);
                                 let expected = &script.to_bytes();
                                 if actual == expected {
-                                    let key_path = KeyPath::new(AddressChain::External, pk_index as u32);
-                                    account.grab_utxo(Utxo::new(output.value, key_path));
+                                    let cache = get_pk_index(pk_index);
+                                    let key_path = KeyPath::new(cache.1, cache.0 as u32);
+
+                                    let utxo = Utxo::new(output.value, key_path, op,
+                                        account_index as u32, script, AccountAddressType::P2WKH);
+
+                                    account.grab_utxo(utxo.clone());
+                                    self.op_to_utxo.insert(op, utxo);
                                 }
                             }
                         }

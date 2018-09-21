@@ -31,3 +31,5 @@ bitcoin-bech32 = "0.8.0"
 
 [dev-dependencies]
 rustc-serialize = "0.3"
+tc_coblox_bitcoincore = "0.2.0"
+testcontainers = "0.2.0"
