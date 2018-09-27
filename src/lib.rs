@@ -20,9 +20,23 @@ extern crate rand;
 extern crate hex;
 extern crate bitcoin_rpc_client;
 extern crate bitcoin_bech32;
+extern crate futures;
+extern crate futures_cpupool;
+extern crate protobuf;
+extern crate grpc;
+extern crate tls_api;
+extern crate rocksdb;
+extern crate byteorder;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+// extern crate bincode;
+extern crate serde_json;
 
 pub mod mnemonic;
 pub mod error;
 pub mod keyfactory;
 pub mod accountfactory;
 pub mod account;
+pub mod walletrpc;
+pub mod walletrpc_grpc;

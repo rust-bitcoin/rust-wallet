@@ -18,9 +18,27 @@ path = "src/lib.rs"
 name = "wallet"
 path = "src/bin/main.rs"
 
+[[bin]]
+name = "gen_protos"
+path = "src/bin/gen_protos.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
+[dependencies.bitcoin]
+version = "0.14.2"
+features = ["serde"]
+
+[dependencies.secp256k1]
+version = "0.11.0"
+features = ["serde"]
+
 [dependencies]
-bitcoin = "0.14"
-secp256k1 = "0.11.0"
 rust-crypto = "0.2"
 log = "0.4"
 simple_logger = "0.5"
@@ -28,6 +46,23 @@ rand = "0.5"
 hex = "0.3"
 bitcoin_rpc_client = "0.2.0"
 bitcoin-bech32 = "0.8.0"
+protoc-rust-grpc = "0.5.0"
+clap = "2.32.0"
+rocksdb = "0.10.1"
+byteorder = "1.2.6"
+serde = "1"
+serde_derive = "1"
+# bincode = "1.0.1"
+serde_json = "1.0.31"
+crossbeam = "0.4.1"
+zmq = "0.8.2"
+
+grpc = "0.5.0"
+protobuf = "~2"
+futures = "0.1.*"
+futures-cpupool = "~0.1"
+tls-api = "0.1.*"
+tls-api-native-tls = "0.1.*"
 
 [dev-dependencies]
 rustc-serialize = "0.3"

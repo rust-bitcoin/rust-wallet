@@ -23,16 +23,25 @@ use bitcoin::util::address::Address;
 use bitcoin::network::constants::Network;
 use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::OutPoint;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::error::Error;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use keyfactory::KeyFactory;
+use walletrpc::{AddressType as RpcAddressType, Utxo as RpcUtxo};
+use protobuf::SingularPtrField;
 
 use secp256k1::{Secp256k1, SecretKey, PublicKey};
+use rocksdb::DB;
+use serde_json;
+use serde::Serialize;
+use hex;
+
+use super::accountfactory::{UTXO_MAP_CF, SECRET_KEY_CF, PUBLIC_KEY_CF};
 
 /// Address type an account is using
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Clone)]
 pub enum AccountAddressType {
     /// pay to public key hash (aka. legacy)
     P2PKH,
@@ -42,13 +51,64 @@ pub enum AccountAddressType {
     P2WKH,
 }
 
-#[derive(Debug, Clone)]
+impl<'a> From<&'a str> for AccountAddressType {
+    fn from(addr_type: &'a str) -> AccountAddressType {
+        // let addr_type_str: &str = &addr_type;
+        match addr_type {
+            "p2pkh"  => AccountAddressType::P2PKH,
+            "p2shwh" => AccountAddressType::P2SHWH,
+            "p2wkh"  => AccountAddressType::P2WKH,
+            _        => unreachable!(),
+        }
+    }
+}
+
+impl From<AccountAddressType> for usize {
+    fn from(val: AccountAddressType) -> usize {
+        match val {
+            AccountAddressType::P2PKH  => 0,
+            AccountAddressType::P2SHWH => 1,
+            AccountAddressType::P2WKH  => 2,
+        }
+    }
+}
+
+impl From<RpcAddressType> for AccountAddressType {
+    fn from(rpc_addr_type: RpcAddressType) -> Self {
+        match rpc_addr_type {
+            RpcAddressType::P2PKH  => AccountAddressType::P2PKH,
+            RpcAddressType::P2SHWH => AccountAddressType::P2SHWH,
+            RpcAddressType::P2WKH  => AccountAddressType::P2WKH,
+        }
+    }
+}
+
+impl Into<RpcAddressType> for AccountAddressType {
+    fn into(self) -> RpcAddressType {
+        match self {
+            AccountAddressType::P2PKH  => RpcAddressType::P2PKH,
+            AccountAddressType::P2SHWH => RpcAddressType::P2SHWH,
+            AccountAddressType::P2WKH  => RpcAddressType::P2WKH,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum AddressChain {
     External,
     Internal,
 }
 
-#[derive(Debug, Clone)]
+impl From<AddressChain> for usize {
+    fn from(val: AddressChain) -> usize {
+        match val {
+            AddressChain::External => 0,
+            AddressChain::Internal => 1,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KeyPath {
     addr_chain: AddressChain,
     addr_index: u32,
@@ -63,7 +123,7 @@ impl KeyPath {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Utxo {
     pub value: u64,
     pub key_path: KeyPath,
@@ -71,6 +131,16 @@ pub struct Utxo {
     pub account_index: u32,
     pub pk_script: Script,
     pub addr_type: AccountAddressType,
+}
+
+impl Into<RpcUtxo> for Utxo {
+    fn into(self) -> RpcUtxo {
+        let mut rpc_utxo = RpcUtxo::new();
+        rpc_utxo.set_value(self.value.into());
+        // rpc_utxo.set_out_point(SingularPtrField::none());
+        rpc_utxo.set_addr_type(self.addr_type.into());
+        rpc_utxo
+    }
 }
 
 impl Utxo {
@@ -96,16 +166,34 @@ pub struct Account {
 
     external_index: u32,
     internal_index: u32,
-    external_sk_list: Vec<SecretKey>,
+    pub external_sk_list: Vec<SecretKey>,
     internal_sk_list: Vec<SecretKey>,
     pub external_pk_list: Vec<PublicKey>,
     pub internal_pk_list: Vec<PublicKey>,
 
-    utxo_list: Rc<RefCell<Vec<Utxo>>>,
+    pub utxo_list: Arc<RwLock<HashMap<OutPoint, Utxo>>>,
+    db: Arc<RwLock<DB>>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SecretKeyHelper {
+    pub addr_type: AccountAddressType,
+    addr_chain: AddressChain,
+    index: u32,
+}
+
+impl SecretKeyHelper {
+    fn new(addr_type: AccountAddressType, addr_chain: AddressChain, index: u32) -> Self {
+        Self {
+            addr_type,
+            addr_chain,
+            index,
+        }
+    }
 }
 
 impl Account {
-    pub fn new (key_factory: Arc<KeyFactory>, account_key: ExtendedPrivKey, address_type: AccountAddressType, network: Network) -> Account {
+    pub fn new (key_factory: Arc<KeyFactory>, account_key: ExtendedPrivKey, address_type: AccountAddressType, network: Network, db: Arc<RwLock<DB>>) -> Account {
         Account {
             key_factory,
             account_key,
@@ -119,7 +207,8 @@ impl Account {
             external_pk_list: Vec::new(),
             internal_pk_list: Vec::new(),
 
-            utxo_list: Rc::new(RefCell::new(Vec::new())),
+            utxo_list: Arc::new(RwLock::new(HashMap::new())),
+            db,
         }
     }
 
@@ -130,25 +219,46 @@ impl Account {
         }
     }
 
-    pub fn grab_utxo(&self, utxo: Utxo) {
-        self.utxo_list.borrow_mut().push(utxo);
+    pub fn grab_utxo(&mut self, utxo: Utxo) {
+        self.utxo_list.write().unwrap().insert(utxo.out_point, utxo.clone());
+        let key = serde_json::to_vec(&utxo.out_point).unwrap();
+        let val = serde_json::to_vec(&utxo).unwrap();
+        let cf = self.db.write().unwrap().cf_handle(UTXO_MAP_CF).unwrap();
+        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice());
     }
 
-    pub fn get_utxo_list(&self) -> Rc<RefCell<Vec<Utxo>>> {
-        Rc::clone(&self.utxo_list)
+    pub fn get_utxo_list(&self) -> Arc<RwLock<HashMap<OutPoint, Utxo>>> {
+        Arc::clone(&self.utxo_list)
     }
 
     pub fn next_external_pk(&mut self) -> Result<PublicKey, Box<Error>> {
         let path: &[ChildNumber] = &[
-            ChildNumber::Normal{index: 0},
+            ChildNumber::Normal{index: 0}, // TODO(evg): use addr chain enum instead?
             ChildNumber::Normal{index: self.external_index},
         ];
-        self.external_index += 1;
         let extended_priv_key = self.account_key.derive_priv(&Secp256k1::new(),path)?;
         self.external_sk_list.push(extended_priv_key.secret_key);
 
         let extended_pub_key = ExtendedPubKey::from_private(&Secp256k1::new(), &extended_priv_key);
         self.external_pk_list.push(extended_pub_key.public_key);
+
+        // DB BEGIN
+        let cf = self.db.read().unwrap().cf_handle(SECRET_KEY_CF).unwrap();
+        let key = SecretKeyHelper::new(
+            self.address_type.clone(), AddressChain::External, self.external_index);
+        let key = serde_json::to_vec(&key).unwrap();
+        let val = serde_json::to_vec(&extended_priv_key.secret_key).unwrap();
+        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice());
+
+        let cf = self.db.read().unwrap().cf_handle(PUBLIC_KEY_CF).unwrap();
+        let key = SecretKeyHelper::new(
+            self.address_type.clone(), AddressChain::External, self.external_index);
+        let key = serde_json::to_vec(&key).unwrap();
+        let val = serde_json::to_vec(&extended_pub_key.public_key).unwrap();
+        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice());
+        // DB END
+
+        self.external_index += 1;
         Ok(extended_pub_key.public_key)
     }
 
@@ -163,6 +273,9 @@ impl Account {
 
         let extended_pub_key = ExtendedPubKey::from_private(&Secp256k1::new(), &extended_priv_key);
         self.internal_pk_list.push(extended_pub_key.public_key);
+
+        // TODO(evg): add interaction with DB
+
         Ok(extended_pub_key.public_key)
     }
 
@@ -255,15 +368,16 @@ mod test {
 
         let mut ac = AccountFactory::new_no_random(
             MasterKeyEntropy::Recommended, Network::Testnet, "", "easy", BitcoindConfig::default()).unwrap();
-        let account = ac.account(0, AccountAddressType::P2PKH).unwrap();
+        let guarded = ac.new_account(0, AccountAddressType::P2PKH).unwrap();
+        let mut account = guarded.write().unwrap();
 
         for expected_pk in get_external_pk_vec() {
-            let pk = account.borrow_mut().next_external_pk().unwrap();
+            let pk = account.next_external_pk().unwrap();
             assert_eq!(hex::encode(&pk.serialize()[..]), expected_pk);
         }
 
         for expected_pk in get_internal_pk_vec() {
-            let pk = account.borrow_mut().next_internal_pk().unwrap();
+            let pk = account.next_internal_pk().unwrap();
             assert_eq!(hex::encode(&pk.serialize()[..]), expected_pk);
         }
     }
@@ -288,15 +402,16 @@ mod test {
 
         let mut ac = AccountFactory::new_no_random(
             MasterKeyEntropy::Recommended, Network::Testnet, "", "easy", BitcoindConfig::default()).unwrap();
-        let account = ac.account(0, AccountAddressType::P2WKH).unwrap();
+        let guarded = ac.new_account(0, AccountAddressType::P2WKH).unwrap();
+        let mut account = guarded.write().unwrap();
 
         for expected_pk in external_pk_vec {
-            let pk = account.borrow_mut().next_external_pk().unwrap();
+            let pk = account.next_external_pk().unwrap();
             assert_eq!(hex::encode(&pk.serialize()[..]), expected_pk);
         }
 
         for expected_pk in internal_pk_vec {
-            let pk = account.borrow_mut().next_internal_pk().unwrap();
+            let pk = account.next_internal_pk().unwrap();
             assert_eq!(hex::encode(&pk.serialize()[..]), expected_pk);
         }
     }

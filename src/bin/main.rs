@@ -19,31 +19,53 @@ fn main() {
 
     let mut ac = AccountFactory::new_no_random(MasterKeyEntropy::Recommended,
                                            Network::Regtest, "", "easy", cfg).unwrap();
-    let p2pkh_account = ac.account(0, AccountAddressType::P2PKH).unwrap();
-    let addr = p2pkh_account.borrow_mut().new_address().unwrap();
-    let change_addr = p2pkh_account.borrow_mut().new_change_address().unwrap();
-    println!("P2PKH        address: {}", addr);
-    println!("P2PKH change address: {}\n", change_addr);
+    ac.initialize();
+    {
+        let guarded = ac.get_account(AccountAddressType::P2PKH);
+        let mut p2pkh_account = guarded.write().unwrap();
+        let addr = p2pkh_account.new_address().unwrap();
+        let change_addr = p2pkh_account.new_change_address().unwrap();
+        println!("P2PKH        address: {}", addr);
+        println!("P2PKH change address: {}\n", change_addr);
+    }
 
-    let p2shwh_account = ac.account(0, AccountAddressType::P2SHWH).unwrap();
-    let addr = p2shwh_account.borrow_mut().new_address().unwrap();
-    let change_addr = p2shwh_account.borrow_mut().new_change_address().unwrap();
-    println!("P2SHWH        address: {}", addr);
-    println!("P2SHWH change address: {}\n", change_addr);
+    {
+        let guarded = ac.get_account(AccountAddressType::P2SHWH);
+        let mut p2shwh_account = guarded.write().unwrap();
+        let addr = p2shwh_account.new_address().unwrap();
+        let change_addr = p2shwh_account.new_change_address().unwrap();
+        println!("P2SHWH        address: {}", addr);
+        println!("P2SHWH change address: {}\n", change_addr);
+    }
 
-    let p2wkh_account = ac.account(0, AccountAddressType::P2WKH).unwrap();
-    let addr = p2wkh_account.borrow_mut().new_address().unwrap();
-    let change_addr = p2wkh_account.borrow_mut().new_change_address().unwrap();
-    println!("P2WKH        address: {}", addr);
-    println!("P2WKH change address: {}\n", change_addr);
+    let p2wkh_addr = {
+        let guarded = ac.get_account(AccountAddressType::P2WKH);
+        let mut p2wkh_account = guarded.write().unwrap();
+        let addr = p2wkh_account.new_address().unwrap();
+        let change_addr = p2wkh_account.new_change_address().unwrap();
+        println!("P2WKH        address: {}", addr);
+        println!("P2WKH change address: {}\n", change_addr);
 
-    let p2wkh_addr = p2wkh_account.borrow_mut().new_address().unwrap();
-    println!("final addr: {:?}\n\n", p2wkh_addr);
+        let p2wkh_addr = p2wkh_account.new_address().unwrap();
+        println!("final addr: {:?}\n\n", p2wkh_addr);
+        p2wkh_addr
+    };
 
     ac.sync_with_blockchain();
-    println!("{:?}\n", p2pkh_account.borrow_mut().get_utxo_list());
-    println!("{:?}\n", p2shwh_account.borrow_mut().get_utxo_list());
-    println!("{:?}\n\n", p2wkh_account.borrow_mut().get_utxo_list());
+    {
+        let guarded = ac.get_account(AccountAddressType::P2PKH);
+        let p2pkh_account  = guarded.read().unwrap();
+
+        let guarded = ac.get_account(AccountAddressType::P2SHWH);
+        let p2shwh_account = guarded.read().unwrap();
+
+        let guarded = ac.get_account(AccountAddressType::P2WKH);
+        let p2wkh_account  = guarded.read().unwrap();
+
+        println!("{:?}\n", p2pkh_account.get_utxo_list());
+        println!("{:?}\n", p2shwh_account.get_utxo_list());
+        println!("{:?}\n\n", p2wkh_account.get_utxo_list());
+    }
 
     let utxo_list = ac.get_utxo_list();
     let mut ops = Vec::new();

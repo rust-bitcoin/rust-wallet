@@ -40,25 +40,35 @@ fn test_base_wallet_functionality() {
 
     let mut ac = AccountFactory::new_no_random(MasterKeyEntropy::Recommended,
                                                Network::Regtest, "", "easy", cfg).unwrap();
-    let p2pkh_account = ac.account(0, AccountAddressType::P2PKH).unwrap();
-    let addr = p2pkh_account.borrow_mut().new_address().unwrap();
-    let change_addr = p2pkh_account.borrow_mut().new_change_address().unwrap();
-    client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0);
-    client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0);
+    ac.initialize();
+    {
+        let guarded = ac.get_account(AccountAddressType::P2PKH);
+        let mut p2pkh_account = guarded.write().unwrap();
+        let addr = p2pkh_account.new_address().unwrap();
+        let change_addr = p2pkh_account.new_change_address().unwrap();
+        client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0);
+        client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0);
+    }
 
-    let p2shwh_account = ac.account(0, AccountAddressType::P2SHWH).unwrap();
-    let addr = p2shwh_account.borrow_mut().new_address().unwrap();
-    let change_addr = p2shwh_account.borrow_mut().new_change_address().unwrap();
-    client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-    client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0);
+    {
+        let guarded = ac.get_account(AccountAddressType::P2SHWH);
+        let mut p2shwh_account = guarded.write().unwrap();
+        let addr = p2shwh_account.new_address().unwrap();
+        let change_addr = p2shwh_account.new_change_address().unwrap();
+        client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
+        client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0);
+    }
 
-    let p2wkh_account = ac.account(0, AccountAddressType::P2WKH).unwrap();
-    let addr = p2wkh_account.borrow_mut().new_address().unwrap();
-    let change_addr = p2wkh_account.borrow_mut().new_change_address().unwrap();
-    client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0);
-    client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0);
+    let p2wkh_addr = {
+        let guarded = ac.get_account(AccountAddressType::P2WKH);
+        let mut p2wkh_account = guarded.write().unwrap();
+        let addr = p2wkh_account.new_address().unwrap();
+        let change_addr = p2wkh_account.new_change_address().unwrap();
+        client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0);
+        client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0);
 
-    let p2wkh_addr = p2wkh_account.borrow_mut().new_address().unwrap();
+        p2wkh_account.new_address().unwrap()
+    };
 
     client.generate(1).unwrap().unwrap();
 
