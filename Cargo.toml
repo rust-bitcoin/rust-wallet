@@ -22,9 +22,9 @@ path = "src/bin/main.rs"
 name = "gen_protos"
 path = "src/bin/gen_protos.rs"
 
-[[bin]]
-name = "server"
-path = "src/bin/server.rs"
+#[[bin]]
+#name = "server"
+#path = "src/bin/server.rs"
 
 [[bin]]
 name = "client"
@@ -37,6 +37,10 @@ features = ["serde"]
 [dependencies.secp256k1]
 version = "0.11.0"
 features = ["serde"]
+
+[dependencies.zmq]
+version = "0.8.2"
+default-features = false
 
 [dependencies]
 rust-crypto = "0.2"
@@ -55,7 +59,6 @@ serde_derive = "1"
 # bincode = "1.0.1"
 serde_json = "1.0.31"
 crossbeam = "0.4.1"
-zmq = "0.8.2"
 
 grpc = "0.5.0"
 protobuf = "~2"
@@ -66,5 +69,7 @@ tls-api-native-tls = "0.1.*"
 
 [dev-dependencies]
 rustc-serialize = "0.3"
-tc_coblox_bitcoincore = "0.2.0"
-testcontainers = "0.2.0"
+# tc_coblox_bitcoincore = "0.2.0"
+# testcontainers = "0.2.0"
+tc_coblox_bitcoincore = { git = "https://github.com/rust-bitcoin-tools/testcontainers-rs.git", branch = "zmq_support" }
+testcontainers = { git = "https://github.com/rust-bitcoin-tools/testcontainers-rs.git", branch = "zmq_support" }

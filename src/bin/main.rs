@@ -1,83 +1,94 @@
 extern crate bitcoin;
-extern crate wallet;
 extern crate hex;
+extern crate wallet;
+extern crate log;
+extern crate simple_logger;
+extern crate clap;
 
-use bitcoin::network::constants::Network;
-use bitcoin::network::encodable::ConsensusEncodable;
-use bitcoin::network::serialize::RawEncoder;
+use clap::{Arg, App};
 
-use wallet::accountfactory::{AccountFactory, BitcoindConfig};
-use wallet::keyfactory::MasterKeyEntropy;
-use wallet::account::AccountAddressType;
+use std::str::FromStr;
+
+use wallet::{
+    server::{launch_server, DEFAULT_WALLET_RPC_PORT},
+    accountfactory::{
+        WalletConfig, BitcoindConfig,
+        DEFAULT_NETWORK, DEFAULT_ENTROPY, DEFAULT_PASSPHRASE, DEFAULT_SALT, DEFAULT_DB_PATH,
+        DEFAULT_BITCOIND_RPC_CONNECT, DEFAULT_BITCOIND_RPC_USER, DEFAULT_BITCOIND_RPC_PASSWORD,
+        DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT, DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT,
+    },
+};
 
 fn main() {
-    let cfg = BitcoindConfig::new(
-        "http://127.0.0.1:18332".to_owned(),
-        "user".to_owned(),
-        "password".to_owned(),
+    let default_wallet_rpc_port_str: &str = &DEFAULT_WALLET_RPC_PORT.to_string();
+
+    let matches = App::new("wallet")
+        .version("1.0")
+        .arg(Arg::with_name("log_level")
+            .long("log_level")
+            .help("should be one of ERROR, WARN, INFO, DEBUG, TRACE")
+            .takes_value(true)
+            .default_value("INFO"))
+        .arg(Arg::with_name("db_path")
+            .long("db_path")
+            .help("path to file with wallet data")
+            .takes_value(true)
+            .default_value(DEFAULT_DB_PATH))
+        .arg(Arg::with_name("connect")
+            .long("connect")
+            .help("address of bitcoind's rpc server")
+            .takes_value(true)
+            .default_value(DEFAULT_BITCOIND_RPC_CONNECT))
+        .arg(Arg::with_name("user")
+            .long("user")
+            .help("bitcoind's rpc user")
+            .takes_value(true)
+            .default_value(DEFAULT_BITCOIND_RPC_USER))
+        .arg(Arg::with_name("password")
+            .long("password")
+            .help("bitcoind's rpc password")
+            .takes_value(true)
+            .default_value(DEFAULT_BITCOIND_RPC_PASSWORD))
+        .arg(Arg::with_name("zmqpubrawblock")
+            .long("zmqpubrawblock")
+            .help("address of bitcoind's zmqpubrawblock endpoint")
+            .takes_value(true)
+            .default_value(DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT))
+        .arg(Arg::with_name("zmqpubrawtx")
+            .long("zmqpubrawtx")
+            .help("address of bitcoind's zmqpubrawtx endpoint")
+            .takes_value(true)
+            .default_value(DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT))
+        .arg(Arg::with_name("wallet_rpc_port")
+            .long("wallet_rpc_port")
+            .help("port of wallet's grpc server")
+            .takes_value(true)
+            .default_value(default_wallet_rpc_port_str))
+        .get_matches();
+
+    let log_level = {
+        let rez = matches.value_of("log_level").unwrap();
+        let rez = log::Level::from_str(rez).unwrap();
+        rez
+    };
+    simple_logger::init_with_level(log_level).unwrap();
+
+    let wc = WalletConfig::new(
+        DEFAULT_NETWORK,
+        DEFAULT_ENTROPY,
+        DEFAULT_PASSPHRASE.to_string(),
+        DEFAULT_SALT.to_string(),
+        matches.value_of("db_path").unwrap().to_string(),
     );
 
-    let mut ac = AccountFactory::new_no_random(MasterKeyEntropy::Recommended,
-                                           Network::Regtest, "", "easy", cfg).unwrap();
-    ac.initialize();
-    {
-        let guarded = ac.get_account(AccountAddressType::P2PKH);
-        let mut p2pkh_account = guarded.write().unwrap();
-        let addr = p2pkh_account.new_address().unwrap();
-        let change_addr = p2pkh_account.new_change_address().unwrap();
-        println!("P2PKH        address: {}", addr);
-        println!("P2PKH change address: {}\n", change_addr);
-    }
+    let cfg = BitcoindConfig::new(
+        matches.value_of("connect").unwrap().to_string(),
+        matches.value_of("user").unwrap().to_string(),
+        matches.value_of("password").unwrap().to_string(),
+        matches.value_of("zmqpubrawblock").unwrap().to_string(),
+        matches.value_of("zmqpubrawtx").unwrap().to_string(),
+    );
 
-    {
-        let guarded = ac.get_account(AccountAddressType::P2SHWH);
-        let mut p2shwh_account = guarded.write().unwrap();
-        let addr = p2shwh_account.new_address().unwrap();
-        let change_addr = p2shwh_account.new_change_address().unwrap();
-        println!("P2SHWH        address: {}", addr);
-        println!("P2SHWH change address: {}\n", change_addr);
-    }
-
-    let p2wkh_addr = {
-        let guarded = ac.get_account(AccountAddressType::P2WKH);
-        let mut p2wkh_account = guarded.write().unwrap();
-        let addr = p2wkh_account.new_address().unwrap();
-        let change_addr = p2wkh_account.new_change_address().unwrap();
-        println!("P2WKH        address: {}", addr);
-        println!("P2WKH change address: {}\n", change_addr);
-
-        let p2wkh_addr = p2wkh_account.new_address().unwrap();
-        println!("final addr: {:?}\n\n", p2wkh_addr);
-        p2wkh_addr
-    };
-
-    ac.sync_with_blockchain();
-    {
-        let guarded = ac.get_account(AccountAddressType::P2PKH);
-        let p2pkh_account  = guarded.read().unwrap();
-
-        let guarded = ac.get_account(AccountAddressType::P2SHWH);
-        let p2shwh_account = guarded.read().unwrap();
-
-        let guarded = ac.get_account(AccountAddressType::P2WKH);
-        let p2wkh_account  = guarded.read().unwrap();
-
-        println!("{:?}\n", p2pkh_account.get_utxo_list());
-        println!("{:?}\n", p2shwh_account.get_utxo_list());
-        println!("{:?}\n\n", p2wkh_account.get_utxo_list());
-    }
-
-    let utxo_list = ac.get_utxo_list();
-    let mut ops = Vec::new();
-    for utxo in &utxo_list {
-        ops.push(utxo.out_point);
-    }
-
-    let tx = ac.make_tx(ops, p2wkh_addr);
-    // println!("{:?}", tx);
-
-    let writer: Vec<u8> = Vec::new();
-    let mut encoder = RawEncoder::new(writer);
-    tx.consensus_encode(&mut encoder).unwrap();
-    println!("{:?}", hex::encode(encoder.into_inner()));
+    let wallet_rpc_port: u16 = matches.value_of("wallet_rpc_port").unwrap().parse().unwrap();
+    launch_server(wc, cfg, wallet_rpc_port);
 }

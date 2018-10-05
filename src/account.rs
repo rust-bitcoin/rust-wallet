@@ -18,27 +18,30 @@
 //!
 //! TREZOR compatible accounts (BIP44)
 //!
-use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
-use bitcoin::util::address::Address;
-use bitcoin::network::constants::Network;
-use bitcoin::blockdata::script::Script;
-use bitcoin::blockdata::transaction::OutPoint;
-use std::sync::{Arc, RwLock};
-use std::error::Error;
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use keyfactory::KeyFactory;
-use walletrpc::{AddressType as RpcAddressType, Utxo as RpcUtxo};
-use protobuf::SingularPtrField;
-
+use bitcoin::{
+    util::{
+        bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber},
+        address::Address,
+    },
+    blockdata::{
+        script::Script,
+        transaction::OutPoint,
+    },
+    network::constants::Network,
+};
 use secp256k1::{Secp256k1, SecretKey, PublicKey};
 use rocksdb::DB;
 use serde_json;
-use serde::Serialize;
-use hex;
 
-use super::accountfactory::{UTXO_MAP_CF, SECRET_KEY_CF, PUBLIC_KEY_CF};
+use std::{
+    sync::{Arc, RwLock},
+    error::Error,
+    collections::HashMap,
+};
+
+use walletrpc::{AddressType as RpcAddressType, Utxo as RpcUtxo, OutPoint as RpcOutPoint};
+use keyfactory::KeyFactory;
+use accountfactory::{UTXO_MAP_CF, SECRET_KEY_CF, PUBLIC_KEY_CF, INTERNAL_SECRET_KEY_CF, INTERNAL_PUBLIC_KEY_CF, };
 
 /// Address type an account is using
 #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Clone)]
@@ -135,9 +138,13 @@ pub struct Utxo {
 
 impl Into<RpcUtxo> for Utxo {
     fn into(self) -> RpcUtxo {
+        let mut op = RpcOutPoint::new();
+        op.set_txid(self.out_point.txid.into_bytes().to_vec());
+        op.set_vout(self.out_point.vout);
+
         let mut rpc_utxo = RpcUtxo::new();
         rpc_utxo.set_value(self.value.into());
-        // rpc_utxo.set_out_point(SingularPtrField::none());
+        rpc_utxo.set_out_point(op);
         rpc_utxo.set_addr_type(self.addr_type.into());
         rpc_utxo
     }
@@ -167,7 +174,7 @@ pub struct Account {
     external_index: u32,
     internal_index: u32,
     pub external_sk_list: Vec<SecretKey>,
-    internal_sk_list: Vec<SecretKey>,
+    pub internal_sk_list: Vec<SecretKey>,
     pub external_pk_list: Vec<PublicKey>,
     pub internal_pk_list: Vec<PublicKey>,
 
@@ -224,7 +231,7 @@ impl Account {
         let key = serde_json::to_vec(&utxo.out_point).unwrap();
         let val = serde_json::to_vec(&utxo).unwrap();
         let cf = self.db.write().unwrap().cf_handle(UTXO_MAP_CF).unwrap();
-        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice());
+        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
     }
 
     pub fn get_utxo_list(&self) -> Arc<RwLock<HashMap<OutPoint, Utxo>>> {
@@ -248,14 +255,14 @@ impl Account {
             self.address_type.clone(), AddressChain::External, self.external_index);
         let key = serde_json::to_vec(&key).unwrap();
         let val = serde_json::to_vec(&extended_priv_key.secret_key).unwrap();
-        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice());
+        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
 
         let cf = self.db.read().unwrap().cf_handle(PUBLIC_KEY_CF).unwrap();
         let key = SecretKeyHelper::new(
             self.address_type.clone(), AddressChain::External, self.external_index);
         let key = serde_json::to_vec(&key).unwrap();
         let val = serde_json::to_vec(&extended_pub_key.public_key).unwrap();
-        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice());
+        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
         // DB END
 
         self.external_index += 1;
@@ -274,7 +281,21 @@ impl Account {
         let extended_pub_key = ExtendedPubKey::from_private(&Secp256k1::new(), &extended_priv_key);
         self.internal_pk_list.push(extended_pub_key.public_key);
 
-        // TODO(evg): add interaction with DB
+        // DB BEGIN
+        let cf = self.db.read().unwrap().cf_handle(INTERNAL_SECRET_KEY_CF).unwrap();
+        let key = SecretKeyHelper::new(
+            self.address_type.clone(), AddressChain::Internal, self.internal_index);
+        let key = serde_json::to_vec(&key).unwrap();
+        let val = serde_json::to_vec(&extended_priv_key.secret_key).unwrap();
+        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
+
+        let cf = self.db.read().unwrap().cf_handle(INTERNAL_PUBLIC_KEY_CF).unwrap();
+        let key = SecretKeyHelper::new(
+            self.address_type.clone(), AddressChain::Internal, self.internal_index);
+        let key = serde_json::to_vec(&key).unwrap();
+        let val = serde_json::to_vec(&extended_pub_key.public_key).unwrap();
+        self.db.write().unwrap().put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
+        // DB END
 
         Ok(extended_pub_key.public_key)
     }
@@ -338,11 +359,10 @@ pub fn p2wkh_script_from_public_key(pk: &PublicKey, network: Network) -> Script 
 
 #[cfg(test)]
 mod test {
-    use accountfactory::AccountFactory;
-    use keyfactory::MasterKeyEntropy;
-    use account::AccountAddressType;
-    use accountfactory::BitcoindConfig;
     use bitcoin::network::constants::Network;
+    use accountfactory::AccountFactory;
+    use account::AccountAddressType;
+    use accountfactory::{WalletConfigBuilder, WalletConfig, BitcoindConfig};
     use hex;
 
     #[test]
@@ -366,8 +386,11 @@ mod test {
             ]
         }
 
-        let mut ac = AccountFactory::new_no_random(
-            MasterKeyEntropy::Recommended, Network::Testnet, "", "easy", BitcoindConfig::default()).unwrap();
+        let wc = WalletConfigBuilder::new()
+            .db_path("/tmp/test_p2pkh_public_key_generation".to_string())
+            .network(Network::Testnet)
+            .finalize();
+        let mut ac = AccountFactory::new_no_random(wc, BitcoindConfig::default()).unwrap();
         let guarded = ac.new_account(0, AccountAddressType::P2PKH).unwrap();
         let mut account = guarded.write().unwrap();
 
@@ -400,8 +423,11 @@ mod test {
             "02a954c4e5275a094182284d96c9044dcb4d9d208cb23d4e181f05459c26e32778",
         ];
 
-        let mut ac = AccountFactory::new_no_random(
-            MasterKeyEntropy::Recommended, Network::Testnet, "", "easy", BitcoindConfig::default()).unwrap();
+        let wc = WalletConfigBuilder::new()
+            .db_path("/tmp/test_p2pkh_public_key_generation".to_string())
+            .network(Network::Testnet)
+            .finalize();
+        let mut ac = AccountFactory::new_no_random(wc, BitcoindConfig::default()).unwrap();
         let guarded = ac.new_account(0, AccountAddressType::P2WKH).unwrap();
         let mut account = guarded.write().unwrap();
 

@@ -1,0 +1,37 @@
+version: 2
+
+jobs:
+  build:
+    docker:
+    - image: circleci/rust
+    environment:
+    - ROCKSDB_LIB_DIR: /usr/lib
+
+    steps:
+    - checkout
+
+    - run:
+        name: debug
+        command: gcc --version
+
+    - run:
+        name: Install ZMQ
+        command: sudo apt-get update && sudo apt-get install -y libzmq3-dev libclang-4.0-dev
+
+    - run:
+        name: Install RocksDB
+        command: |
+          sudo ln -sf /usr/lib/gcc/x86_64-linux-gnu/6/include/stdarg.h /usr/include/stdarg.h
+          sudo ln -sf /usr/lib/gcc/x86_64-linux-gnu/6/include/stddef.h /usr/include/stddef.h
+          git clone https://github.com/facebook/rocksdb
+          cd rocksdb
+          make shared_lib
+          sudo cp librocksdb.so* $ROCKSDB_LIB_DIR
+
+    - run:
+        name: Stable Build
+        command: RUST_BACKTRACE=1 cargo build
+
+#    - run:
+#        name: Test
+#        command: cargo test -- --test-threads=1

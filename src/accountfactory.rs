@@ -19,63 +19,208 @@
 //! TREZOR compatible account derivation (BIP44)
 //!
 
-use bitcoin::network::constants::Network;
-use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
-use bitcoin::util::bip143;
-use bitcoin::util::hash::Sha256dHash;
-use bitcoin::util::address::Address;
-use bitcoin::util::hash::Hash160;
-use bitcoin::blockdata::transaction::{OutPoint, Transaction as BitcoinTransaction, TxIn, TxOut};
-use bitcoin::blockdata::script::{Script, Builder};
-use bitcoin::blockdata::block::Block as WireBlock;
-use bitcoin::BitcoinHash;
-use keyfactory::{KeyFactory, MasterKeyEntropy, Seed};
-use error::WalletError;
-use mnemonic::Mnemonic;
-use account::{Account,AccountAddressType,Utxo,KeyPath,AddressChain};
+use bitcoin::{
+    util::{
+        bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber},
+        bip143,
+        address::Address,
+    },
+
+    blockdata::transaction::{OutPoint, Transaction as BitcoinTransaction, TxIn, TxOut},
+    blockdata::script::{Script, Builder},
+    blockdata::block::Block as WireBlock,
+
+    network::constants::Network,
+};
 use secp256k1::{Secp256k1, SecretKey, PublicKey, Message};
+use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, TransactionId, Block};
 use rocksdb::{DB, ColumnFamilyDescriptor, Options, IteratorMode};
 use byteorder::{ByteOrder, BigEndian};
 use serde_json;
-use std::sync::Arc;
-use std::sync::RwLock;
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::str::FromStr;
 
-use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, SerializedRawTransaction, TransactionId, Block};
+use std::{
+    error::Error,
+    sync::{Arc, RwLock},
+    collections::HashMap,
+    str::FromStr,
+};
 
-use super::account::SecretKeyHelper;
+use error::WalletError;
+use mnemonic::Mnemonic;
+use keyfactory::{KeyFactory, MasterKeyEntropy};
+use account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain, SecretKeyHelper};
 
 static LAST_SEEN_BLOCK_HEIGHT: &'static [u8] = b"lsbh";
 pub static UTXO_MAP_CF: &'static str = "utxo_map";
 pub static SECRET_KEY_CF: &'static str = "skcf";
 pub static PUBLIC_KEY_CF: &'static str = "pkcf";
+pub static INTERNAL_SECRET_KEY_CF: &'static str = "internal_skcf";
+pub static INTERNAL_PUBLIC_KEY_CF: &'static str = "internal_pkcf";
 
+static LOCK_GROUP_MAP_CF: &'static str = "lgm";
+
+pub static DEFAULT_BITCOIND_RPC_CONNECT: &'static str = "http://127.0.0.1:18332";
+pub static DEFAULT_BITCOIND_RPC_USER: &'static str = "user";
+pub static DEFAULT_BITCOIND_RPC_PASSWORD: &'static str = "password";
+pub static DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT: &'static str = "tcp://localhost:18501";
+pub static DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT: &'static str = "tcp://localhost:18501";
+
+pub const DEFAULT_NETWORK: Network = Network::Regtest;
+pub const DEFAULT_ENTROPY: MasterKeyEntropy = MasterKeyEntropy::Recommended;
+pub static DEFAULT_PASSPHRASE: &'static str = "";
+pub static DEFAULT_SALT: &'static str = "easy";
+pub static DEFAULT_DB_PATH: &'static str = "rocks.db";
+
+#[derive(Clone)]
 pub struct BitcoindConfig {
     url:      String,
     user:     String,
     password: String,
+    pub zmq_pub_raw_block: String,
+    zmq_pub_raw_tx:    String,
 }
 
 impl BitcoindConfig {
-    pub fn new(url: String, user: String, password: String) -> Self {
+    pub fn new(url: String, user: String, password: String, zmq_pub_raw_block: String, zmq_pub_raw_tx: String) -> Self {
         Self {
             url,
             user,
             password,
+            zmq_pub_raw_block,
+            zmq_pub_raw_tx,
         }
     }
 }
 
 impl Default for BitcoindConfig {
     fn default() -> Self {
+        BitcoindConfig::new(
+            DEFAULT_BITCOIND_RPC_CONNECT.to_string(),
+            DEFAULT_BITCOIND_RPC_USER.to_string(),
+            DEFAULT_BITCOIND_RPC_PASSWORD.to_string(),
+            DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT.to_string(),
+            DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT.to_string(),
+        )
+    }
+}
+
+pub struct WalletConfigBuilder {
+    inner: WalletConfig,
+}
+
+impl WalletConfigBuilder {
+    pub fn new() -> Self {
         Self {
-            url:      String::new(),
-            user:     String::new(),
-            password: String::new(),
+            inner: WalletConfig::default(),
         }
+    }
+
+    pub fn network(mut self, network: Network) -> WalletConfigBuilder {
+        self.inner.network = network;
+        self
+    }
+
+    pub fn db_path(mut self, db_path: String) -> WalletConfigBuilder {
+        self.inner.db_path = db_path;
+        self
+    }
+
+    pub fn finalize(self) -> WalletConfig {
+        self.inner
+    }
+}
+
+pub struct WalletConfig {
+    network: Network,
+    entropy: MasterKeyEntropy,
+    passphrase: String,
+    salt: String,
+    db_path: String
+}
+
+impl WalletConfig {
+    pub fn new(network: Network, entropy: MasterKeyEntropy, passphrase: String, salt: String, db_path: String) -> Self {
+        Self {
+            network,
+            entropy,
+            passphrase,
+            salt,
+            db_path,
+        }
+    }
+
+    pub fn with_db_path(db_path: String) -> Self {
+        let mut wc = Self::default();
+        wc.db_path = db_path;
+        wc
+    }
+}
+
+impl Default for WalletConfig {
+    fn default() -> Self {
+        WalletConfig::new(
+            DEFAULT_NETWORK,
+            DEFAULT_ENTROPY,
+            DEFAULT_PASSPHRASE.to_string(),
+            DEFAULT_SALT.to_string(),
+            DEFAULT_DB_PATH.to_string(),
+        )
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, Clone, Serialize)]
+pub struct LockId(u64);
+
+impl LockId {
+    fn new() -> Self {
+        LockId(0)
+    }
+
+    fn incr(&mut self) {
+        self.0 += 1;
+    }
+}
+
+impl From<u64> for LockId {
+    fn from(value: u64) -> LockId {
+        LockId(value)
+    }
+}
+
+impl From<LockId> for u64 {
+    fn from(lock_id: LockId) -> u64 {
+        lock_id.0
+    }
+}
+
+// TODO(evg): impl iter?
+#[derive(Serialize, Clone)]
+struct LockGroup(Vec<OutPoint>);
+
+struct LockGroupMap(HashMap<LockId, LockGroup>);
+
+impl LockGroupMap {
+    fn new() -> Self {
+        LockGroupMap(HashMap::new())
+    }
+
+    fn lock_group(&mut self, lock_id: LockId, lock_group: LockGroup) {
+        self.0.insert(lock_id, lock_group);
+    }
+
+    fn unlock_group(&mut self, lock_id: LockId) {
+        self.0.remove(&lock_id).unwrap();
+    }
+
+    fn is_locked(&self, op: &OutPoint) -> bool {
+        for (_, lock_group) in &self.0 {
+            for item in &lock_group.0 {
+                if op == item {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -87,50 +232,60 @@ pub struct AccountFactory {
     key_factory: Arc<KeyFactory>,
     account_list: Vec<Arc<RwLock<Account>>>,
     network: Network,
+    #[allow(dead_code)]
     cfg: BitcoindConfig,
-    client: BitcoinCoreClient,
+    pub client: BitcoinCoreClient,
     last_seen_block_height: usize,
     op_to_utxo: HashMap<OutPoint, Utxo>,
+    // TODO(evg): add LockId type, LockGroup type
+    next_lock_id: LockId,
+    locked_coins: LockGroupMap,
     db: Arc<RwLock<DB>>,
 }
 
 impl AccountFactory {
     /// initialize with new random master key
     // TODO(evg): avoid code duplicate
-    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
-        let key_factory = KeyFactory::new();
-        let (master_key, mnemonic, encrypted) = key_factory.new_master_private_key (entropy, network, passphrase, salt)?;
-        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
-        let db = DB::open_default("rocks.db").unwrap();
-        Ok(AccountFactory{
-            key_factory: Arc::new(key_factory),
-            master_key,
-            mnemonic,
-            encrypted,
-            account_list: Vec::new(),
-            network,
-            cfg,
-            client,
-            last_seen_block_height: 1,
-            op_to_utxo: HashMap::new(),
-            db: Arc::new(RwLock::new(db)),
-        })
-    }
+//    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
+//        let key_factory = KeyFactory::new();
+//        let (master_key, mnemonic, encrypted) = key_factory.new_master_private_key (entropy, network, passphrase, salt)?;
+//        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
+//        let db = DB::open_default("rocks.db").unwrap();
+//        Ok(AccountFactory{
+//            key_factory: Arc::new(key_factory),
+//            master_key,
+//            mnemonic,
+//            encrypted,
+//            account_list: Vec::new(),
+//            network,
+//            cfg,
+//            client,
+//            last_seen_block_height: 1,
+//            op_to_utxo: HashMap::new(),
+//            db: Arc::new(RwLock::new(db)),
+//        })
+//    }
 
-    pub fn new_no_random (entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
+    pub fn new_no_random (wc: WalletConfig, btc_cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
         let key_factory = KeyFactory::new();
-        let (master_key, mnemonic, encrypted, _) = key_factory.new_master_private_key_no_random (entropy, network, passphrase, salt)?;
-        println!("{}", mnemonic.to_string());
-        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
+        let (master_key, mnemonic, encrypted, _) = key_factory.new_master_private_key_no_random (wc.entropy, wc.network, &wc.passphrase, &wc.salt)?;
+        // println!("{}", mnemonic.to_string());
+        let client = BitcoinCoreClient::new(&btc_cfg.url, &btc_cfg.user, &btc_cfg.password);
 
         let utxo_map_cf= ColumnFamilyDescriptor::new(UTXO_MAP_CF, Options::default());
         let secret_key_cf = ColumnFamilyDescriptor::new(SECRET_KEY_CF, Options::default());
         let public_key_cf = ColumnFamilyDescriptor::new(PUBLIC_KEY_CF, Options::default());
 
+        let internal_secret_key_cf = ColumnFamilyDescriptor::new(INTERNAL_SECRET_KEY_CF, Options::default());
+        let internal_public_key_cf = ColumnFamilyDescriptor::new(INTERNAL_PUBLIC_KEY_CF, Options::default());
+
+        let lock_group_map_cf = ColumnFamilyDescriptor::new(LOCK_GROUP_MAP_CF, Options::default());
+
         let mut db_opts = Options::default();
         db_opts.create_missing_column_families(true);
         db_opts.create_if_missing(true);
-        let db = DB::open_cf_descriptors(&db_opts, "rocks.db", vec![utxo_map_cf, secret_key_cf, public_key_cf]).unwrap();
+        let db = DB::open_cf_descriptors(&db_opts, &wc.db_path, vec![
+            utxo_map_cf, secret_key_cf, public_key_cf, internal_secret_key_cf, internal_public_key_cf, lock_group_map_cf]).unwrap();
 
         // let db = DB::open_default("rocks.db").unwrap();
         let last_seen_block_height = db.get(LAST_SEEN_BLOCK_HEIGHT)
@@ -153,21 +308,29 @@ impl AccountFactory {
         let public_cf = db.cf_handle(PUBLIC_KEY_CF).unwrap();
         let public_iter = db.iterator_cf(public_cf, IteratorMode::Start).unwrap();
 
+        let internal_cf = db.cf_handle(INTERNAL_SECRET_KEY_CF).unwrap();
+        let internal_iter = db.iterator_cf(internal_cf, IteratorMode::Start).unwrap();
+
+        let internal_public_cf = db.cf_handle(INTERNAL_PUBLIC_KEY_CF).unwrap();
+        let internal_public_iter = db.iterator_cf(internal_public_cf, IteratorMode::Start).unwrap();
+
         let mut ac = AccountFactory{
             key_factory: Arc::new(key_factory),
             master_key,
             mnemonic,
             encrypted,
             account_list: Vec::new(),
-            network,
-            cfg,
+            network: wc.network,
+            cfg: btc_cfg,
             client,
             last_seen_block_height,
             op_to_utxo,
+            next_lock_id: LockId::new(),
+            locked_coins: LockGroupMap::new(),
             db: Arc::new(RwLock::new(db)),
         };
         ac.initialize();
-        for (key, val) in &ac.op_to_utxo {
+        for (_, val) in &ac.op_to_utxo {
             let guarded_acc = &*ac.account_list[usize::from(val.addr_type.clone())];
             let acc = guarded_acc.write().unwrap();
             acc.utxo_list.write().unwrap().insert(val.out_point, val.clone());
@@ -194,30 +357,52 @@ impl AccountFactory {
 
             acc.external_pk_list.push(pk);
         }
+
+        for (key, val) in internal_iter {
+            let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
+            let sk: [u8; 32] = serde_json::from_slice(&val).unwrap();
+            let sk = SecretKey::from_slice(&Secp256k1::new(), &sk).unwrap();
+
+            let guarded_acc = &*ac.account_list[usize::from(key_helper.addr_type.clone())];
+            let mut acc = guarded_acc.write().unwrap();
+
+            acc.internal_sk_list.push(sk);
+        }
+
+        for (key, val) in internal_public_iter {
+            let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
+            let pk: Vec<u8> = serde_json::from_slice(&val).unwrap();
+            let pk = PublicKey::from_slice(&Secp256k1::new(), pk.as_slice()).unwrap();
+
+            let guarded_acc = &*ac.account_list[usize::from(key_helper.addr_type.clone())];
+            let mut acc = guarded_acc.write().unwrap();
+
+            acc.internal_pk_list.push(pk);
+        }
         Ok(ac)
     }
 
     /// decrypt stored master key
-    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
-        let mnemonic = Mnemonic::new (encrypted, passphrase)?;
-        let key_factory = KeyFactory::new();
-        let master_key = key_factory.master_private_key(network, &Seed::new(&mnemonic, salt))?;
-        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
-        let db = DB::open_default("rocks.db").unwrap();
-        Ok(AccountFactory{
-            key_factory: Arc::new(key_factory),
-            master_key,
-            mnemonic,
-            encrypted: encrypted.to_vec(),
-            account_list: Vec::new(),
-            network,
-            cfg,
-            client,
-            last_seen_block_height: 1,
-            op_to_utxo: HashMap::new(),
-            db: Arc::new(RwLock::new(db)),
-        })
-    }
+//    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
+//        let mnemonic = Mnemonic::new (encrypted, passphrase)?;
+//        let key_factory = KeyFactory::new();
+//        let master_key = key_factory.master_private_key(network, &Seed::new(&mnemonic, salt))?;
+//        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
+//        let db = DB::open_default("rocks.db").unwrap();
+//        Ok(AccountFactory{
+//            key_factory: Arc::new(key_factory),
+//            master_key,
+//            mnemonic,
+//            encrypted: encrypted.to_vec(),
+//            account_list: Vec::new(),
+//            network,
+//            cfg,
+//            client,
+//            last_seen_block_height: 1,
+//            op_to_utxo: HashMap::new(),
+//            db: Arc::new(RwLock::new(db)),
+//        })
+//    }
 
     pub fn initialize(&mut self) {
         self.new_account(0, AccountAddressType::P2PKH).unwrap();
@@ -274,15 +459,70 @@ impl AccountFactory {
             let account_utxo_list = &account.read().unwrap().get_utxo_list();
             // joined.extend_from_slice(&*account_utxo_list.read().unwrap());
             let account_utxo_list = &*account_utxo_list.read().unwrap();
-            for (key, val) in account_utxo_list {
+            for (_, val) in account_utxo_list {
                 joined.push(val.clone());
             }
         }
         joined
     }
 
+    pub fn wallet_balance(&self) -> u64 {
+        let utxo_list = self.get_utxo_list();
+
+        let mut balance: u64 = 0;
+        for utxo in utxo_list {
+            balance += utxo.value;
+        }
+        balance
+    }
+
+    pub fn unlock_coins(&mut self, lock_id: LockId) {
+        self.locked_coins.unlock_group(lock_id);
+    }
+
+    pub fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool) -> Result<(BitcoinTransaction, LockId), Box<Error>> {
+        let utxo_list = self.get_utxo_list();
+
+        let mut total = 0;
+        let mut subset = Vec::new();
+        for utxo in utxo_list {
+            if self.locked_coins.is_locked(&utxo.out_point) {
+                continue
+            }
+
+            if witness_only {
+                if utxo.addr_type != AccountAddressType::P2WKH {
+                    continue
+                }
+            }
+
+            total += utxo.value;
+            subset.push(utxo.out_point);
+
+            if total >= amt + 10000 {
+                break
+            }
+        }
+
+        let tx = self.make_tx(subset.clone(), addr_str, amt)?;
+        if lock_coins {
+            let lock_group = LockGroup(subset);
+            self.locked_coins.lock_group(self.next_lock_id.clone(), lock_group.clone());
+
+            let cf = self.db.read().unwrap().cf_handle(LOCK_GROUP_MAP_CF).unwrap();
+            let key = serde_json::to_vec(&self.next_lock_id.clone()).unwrap();
+            let value = serde_json::to_vec(&lock_group).unwrap();
+            self.db.write().unwrap().put_cf(cf, &key, &value).unwrap();
+
+            let rez = self.next_lock_id.clone();
+            self.next_lock_id.incr();
+            return Ok((tx, rez));
+        };
+        Ok((tx, LockId::new()))
+    }
+
     // TODO(evg): add version, lock_time param?
-    pub fn make_tx(&self, ops: Vec<OutPoint>, addr_str: String) -> BitcoinTransaction {
+    pub fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64) -> Result<BitcoinTransaction, Box<Error>> {
         let addr: Address = Address::from_str(&addr_str).unwrap();
 
         let mut tx = BitcoinTransaction {
@@ -306,11 +546,28 @@ impl AccountFactory {
             tx.input.push(input);
         }
 
+        if total < (amt + 10_000) {
+            return Err(From::from("something went wrong..."));
+        }
+
+        // dest output
         let output = TxOut{
-            value: total - 10_000, // subtract fee
+            value: amt,
             script_pubkey: addr.script_pubkey(),
         };
         tx.output.push(output);
+
+        let change_addr = {
+            let mut account = self.account_list[AccountAddressType::P2WKH as usize].write().unwrap();
+            let change_addr = account.new_change_address().unwrap();
+            Address::from_str(&change_addr).unwrap()
+        };
+
+        let change_output = TxOut{
+            value: total - amt - 10_000, // subtract fee
+            script_pubkey: change_addr.script_pubkey(),
+        };
+        tx.output.push(change_output);
 
         // sign tx
         for i in 0..ops.len() {
@@ -392,7 +649,7 @@ impl AccountFactory {
                 }
             }
         }
-        tx
+        Ok(tx)
     }
 
     pub fn process_tx(&mut self, txid: &TransactionId, tx: &BitcoinTransaction) {

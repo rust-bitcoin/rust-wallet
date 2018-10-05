@@ -3,10 +3,16 @@ syntax = "proto3";
 package walletrpc;
 
 service Wallet {
-    rpc NewAddress(NewAddressRequest) returns (NewAddressResponse) {}
-    rpc GetUtxoList(GetUtxoListRequest) returns (GetUtxoListResponse) {}
-    rpc SyncWithTip(SyncWithTipRequest) returns (SyncWithTipResponse) {}
-    rpc MakeTx(MakeTxRequest) returns (MakeTxResponse) {}
+    rpc NewAddress (NewAddressRequest) returns (NewAddressResponse) {}
+    rpc NewChangeAddress (NewChangeAddressRequest) returns (NewChangeAddressResponse) {};
+    rpc GetUtxoList (GetUtxoListRequest) returns (GetUtxoListResponse) {}
+    rpc WalletBalance (WalletBalanceRequest) returns (WalletBalanceResponse) {}
+    rpc SyncWithTip (SyncWithTipRequest) returns (SyncWithTipResponse) {}
+    rpc MakeTx (MakeTxRequest) returns (MakeTxResponse) {}
+    rpc SendCoins (SendCoinsRequest) returns (SendCoinsResponse) {}
+    rpc UnlockCoins (UnlockCoinsRequest) returns (UnlockCoinsResponse) {
+    }
+    rpc Shutdown (ShutdownRequest) returns (ShutdownResponse) {}
 }
 
 // TODO(evg): should be compatible with lncli?
@@ -21,6 +27,14 @@ message NewAddressRequest {
 }
 
 message NewAddressResponse {
+    string address = 1;
+}
+
+message NewChangeAddressRequest {
+    AddressType addr_type = 1;
+}
+
+message NewChangeAddressResponse {
     string address = 1;
 }
 
@@ -44,8 +58,46 @@ message GetUtxoListResponse {
     repeated Utxo utxos = 1;
 }
 
+message WalletBalanceRequest {
+}
+
+message WalletBalanceResponse {
+    uint64 total_balance = 1;
+}
+
 message SyncWithTipRequest {}
 message SyncWithTipResponse {}
 
-message MakeTxRequest {}
-message MakeTxResponse {}
+// use either auto or (ops, dest_addr) tuple
+message MakeTxRequest {
+    bool auto = 1;
+    repeated OutPoint ops = 2;
+    string dest_addr = 3;
+    uint64 amt = 4;
+    bool submit = 5;
+}
+message MakeTxResponse {
+    bytes serialized_raw_tx = 1;
+}
+
+message SendCoinsRequest {
+    string dest_addr = 1;
+    uint64 amt = 2;
+    bool submit = 3;
+    bool lock_coins = 4;
+    bool witness_only = 5;
+}
+message SendCoinsResponse {
+    bytes serialized_raw_tx = 1;
+    uint64 lock_id = 2;
+}
+
+message UnlockCoinsRequest {
+    uint64 lock_id = 1;
+}
+
+message UnlockCoinsResponse {
+}
+
+message ShutdownRequest {}
+message ShutdownResponse {}
