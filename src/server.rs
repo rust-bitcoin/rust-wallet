@@ -11,7 +11,6 @@ use bitcoin::{
 use protobuf::RepeatedField;
 use grpc;
 use tls_api_native_tls;
-use hex;
 use crossbeam;
 use zmq;
 use bitcoin_rpc_client::{BitcoinRpcApi, SerializedRawTransaction};
@@ -48,18 +47,18 @@ struct WalletImpl(Arc<RwLock<AccountFactory>>, Arc<AtomicBool>);
 impl WalletImpl {
     fn new_address_helper(&self, req: &NewAddressRequest) -> Result<NewAddressResponse, Box<Error>> {
         let mut resp = NewAddressResponse::new();
-        let ac = self.0.read().unwrap();
-        let account = ac.get_account(req.get_addr_type().into());
-        let addr = account.write().unwrap().new_address()?;
+        let mut ac = self.0.write().unwrap();
+        let account = ac.get_account_mut(req.get_addr_type().into());
+        let addr = account.new_address()?;
         resp.set_address(addr);
         Ok(resp)
     }
 
     fn new_change_address(&self, req: &NewChangeAddressRequest) -> Result<NewChangeAddressResponse, Box<Error>> {
         let mut resp = NewChangeAddressResponse::new();
-        let ac = self.0.read().unwrap();
-        let account = ac.get_account(req.get_addr_type().into());
-        let addr = account.write().unwrap().new_change_address()?;
+        let mut ac = self.0.write().unwrap();
+        let account = ac.get_account_mut(req.get_addr_type().into());
+        let addr = account.new_change_address()?;
         resp.set_address(addr);
         Ok(resp)
     }
@@ -184,8 +183,7 @@ impl Wallet for WalletImpl {
 }
 
 pub fn launch_server(wc: WalletConfig, cfg: BitcoindConfig, wallet_rpc_port: u16) {
-    let mut ac = AccountFactory::new_no_random(wc, cfg.clone()).unwrap();
-    ac.initialize();
+    let ac = AccountFactory::new_no_random(wc, cfg.clone()).unwrap();
 
     let rw_lock_ac = Arc::new(RwLock::new(ac));
     let shutdown = Arc::new(AtomicBool::new(false));

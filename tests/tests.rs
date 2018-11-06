@@ -34,9 +34,9 @@ use wallet::{
     walletrpc::AddressType,
 };
 
-const LAUNCH_SERVER_DELAY_MS: u64 = 1000;
-const SHUTDOWN_SERVER_DELAY_MS: u64 = 700;
-const ZMQ_BLOCK_NTFN_DELAY_MS: u64 = 700;
+const LAUNCH_SERVER_DELAY_MS: u64 = 3000;
+const SHUTDOWN_SERVER_DELAY_MS: u64 = 2000;
+const ZMQ_BLOCK_NTFN_DELAY_MS: u64 = 1000;
 
 fn bitcoind_init(node: &Container<DockerCli, BitcoinCore>) -> (BitcoinCoreClient, BitcoindConfig) {
     let host_port = node.get_host_port(18443).unwrap();
@@ -92,8 +92,9 @@ fn test_base_wallet_functionality() {
     let mut ac = AccountFactory::new_no_random(
         WalletConfig::with_db_path(tmp_db_path()), cfg).unwrap();
     {
-        let guarded = ac.get_account(AccountAddressType::P2PKH);
-        let mut p2pkh_account = guarded.write().unwrap();
+        // let guarded = ac.get_account(AccountAddressType::P2PKH);
+        // let mut p2pkh_account = guarded.write().unwrap();
+        let p2pkh_account = ac.get_account_mut(AccountAddressType::P2PKH);
         let addr = p2pkh_account.new_address().unwrap();
         let change_addr = p2pkh_account.new_change_address().unwrap();
         client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
@@ -101,8 +102,9 @@ fn test_base_wallet_functionality() {
     }
 
     {
-        let guarded = ac.get_account(AccountAddressType::P2SHWH);
-        let mut p2shwh_account = guarded.write().unwrap();
+        // let guarded = ac.get_account(AccountAddressType::P2SHWH);
+        // let mut p2shwh_account = guarded.write().unwrap();
+        let p2shwh_account = ac.get_account_mut(AccountAddressType::P2SHWH);
         let addr = p2shwh_account.new_address().unwrap();
         let change_addr = p2shwh_account.new_change_address().unwrap();
         client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
@@ -110,8 +112,9 @@ fn test_base_wallet_functionality() {
     }
 
     let p2wkh_addr = {
-        let guarded = ac.get_account(AccountAddressType::P2WKH);
-        let mut p2wkh_account = guarded.write().unwrap();
+        // let guarded = ac.get_account(AccountAddressType::P2WKH);
+        // let mut p2wkh_account = guarded.write().unwrap();
+        let mut p2wkh_account = ac.get_account_mut(AccountAddressType::P2WKH);
         let addr = p2wkh_account.new_address().unwrap();
         let change_addr = p2wkh_account.new_change_address().unwrap();
         client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();

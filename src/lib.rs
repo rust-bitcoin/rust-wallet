@@ -47,3 +47,4 @@ pub mod account;
 pub mod server;
 pub mod walletrpc;
 pub mod walletrpc_grpc;
+mod db;

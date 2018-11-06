@@ -126,7 +126,6 @@ mod test {
         let json = Json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
 
-        let key_factory: KeyFactory = KeyFactory::new();
         let mut pk_test_count = 0;
 
         for t in 0 .. tests.len() {
@@ -140,7 +139,7 @@ mod test {
             if values.len() == 4 {
                 let pk = values[3].as_string().unwrap();
 
-                let private_key = KeyFactory::master_private_key(&key_factory ,Network::Bitcoin, &seed).unwrap();
+                let private_key = KeyFactory::master_private_key(Network::Bitcoin, &seed).unwrap();
                 let mut key = private_key.clone();
 
                 assert_eq!(key.to_string(), pk);

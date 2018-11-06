@@ -32,11 +32,8 @@ use bitcoin::{
 
     network::constants::Network,
 };
-use secp256k1::{Secp256k1, SecretKey, PublicKey, Message};
+use secp256k1::{Secp256k1, PublicKey, Message};
 use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, TransactionId, Block};
-use rocksdb::{DB, ColumnFamilyDescriptor, Options, IteratorMode};
-use byteorder::{ByteOrder, BigEndian};
-use serde_json;
 
 use std::{
     error::Error,
@@ -48,16 +45,8 @@ use std::{
 use error::WalletError;
 use mnemonic::Mnemonic;
 use keyfactory::{KeyFactory, MasterKeyEntropy};
-use account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain, SecretKeyHelper};
-
-static LAST_SEEN_BLOCK_HEIGHT: &'static [u8] = b"lsbh";
-pub static UTXO_MAP_CF: &'static str = "utxo_map";
-pub static SECRET_KEY_CF: &'static str = "skcf";
-pub static PUBLIC_KEY_CF: &'static str = "pkcf";
-pub static INTERNAL_SECRET_KEY_CF: &'static str = "internal_skcf";
-pub static INTERNAL_PUBLIC_KEY_CF: &'static str = "internal_pkcf";
-
-static LOCK_GROUP_MAP_CF: &'static str = "lgm";
+use account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain};
+use db::DB;
 
 pub static DEFAULT_BITCOIND_RPC_CONNECT: &'static str = "http://127.0.0.1:18332";
 pub static DEFAULT_BITCOIND_RPC_USER: &'static str = "user";
@@ -195,7 +184,7 @@ impl From<LockId> for u64 {
 
 // TODO(evg): impl iter?
 #[derive(Serialize, Clone)]
-struct LockGroup(Vec<OutPoint>);
+pub struct LockGroup(Vec<OutPoint>);
 
 struct LockGroupMap(HashMap<LockId, LockGroup>);
 
@@ -229,19 +218,21 @@ pub struct AccountFactory {
     master_key: ExtendedPrivKey,
     mnemonic: Mnemonic,
     encrypted: Vec<u8>,
-    key_factory: Arc<KeyFactory>,
-    account_list: Vec<Arc<RwLock<Account>>>,
+    p2pkh_account: Account,
+    p2shwh_account: Account,
+    p2wkh_account: Account,
+    #[allow(dead_code)]
     network: Network,
     #[allow(dead_code)]
     cfg: BitcoindConfig,
     pub client: BitcoinCoreClient,
     last_seen_block_height: usize,
     op_to_utxo: HashMap<OutPoint, Utxo>,
-    // TODO(evg): add LockId type, LockGroup type
     next_lock_id: LockId,
     locked_coins: LockGroupMap,
     db: Arc<RwLock<DB>>,
 }
+
 
 impl AccountFactory {
     /// initialize with new random master key
@@ -267,59 +258,51 @@ impl AccountFactory {
 //    }
 
     pub fn new_no_random (wc: WalletConfig, btc_cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
-        let key_factory = KeyFactory::new();
-        let (master_key, mnemonic, encrypted, _) = key_factory.new_master_private_key_no_random (wc.entropy, wc.network, &wc.passphrase, &wc.salt)?;
-        // println!("{}", mnemonic.to_string());
+        let (master_key, mnemonic, encrypted, _) =
+            KeyFactory::new_master_private_key_no_random (
+                wc.entropy,
+                wc.network,
+                &wc.passphrase,
+                &wc.salt,
+            )?;
         let client = BitcoinCoreClient::new(&btc_cfg.url, &btc_cfg.user, &btc_cfg.password);
 
-        let utxo_map_cf= ColumnFamilyDescriptor::new(UTXO_MAP_CF, Options::default());
-        let secret_key_cf = ColumnFamilyDescriptor::new(SECRET_KEY_CF, Options::default());
-        let public_key_cf = ColumnFamilyDescriptor::new(PUBLIC_KEY_CF, Options::default());
+        let db = DB::new(wc.db_path);
+        let last_seen_block_height = db.get_last_seen_block_height();
+        let op_to_utxo = db.get_utxo_map();
+        let db = Arc::new(RwLock::new(db));
 
-        let internal_secret_key_cf = ColumnFamilyDescriptor::new(INTERNAL_SECRET_KEY_CF, Options::default());
-        let internal_public_key_cf = ColumnFamilyDescriptor::new(INTERNAL_PUBLIC_KEY_CF, Options::default());
+        let p2pkh_account = AccountFactory::new_account(
+            master_key,
+            0,
+            AccountAddressType::P2PKH,
+            Network::Regtest,
+            Arc::clone(&db),
+        );
 
-        let lock_group_map_cf = ColumnFamilyDescriptor::new(LOCK_GROUP_MAP_CF, Options::default());
+        let p2shwh_account = AccountFactory::new_account(
+            master_key,
+            0,
+            AccountAddressType::P2SHWH,
+            Network::Regtest,
+            Arc::clone(&db),
+        );
 
-        let mut db_opts = Options::default();
-        db_opts.create_missing_column_families(true);
-        db_opts.create_if_missing(true);
-        let db = DB::open_cf_descriptors(&db_opts, &wc.db_path, vec![
-            utxo_map_cf, secret_key_cf, public_key_cf, internal_secret_key_cf, internal_public_key_cf, lock_group_map_cf]).unwrap();
-
-        // let db = DB::open_default("rocks.db").unwrap();
-        let last_seen_block_height = db.get(LAST_SEEN_BLOCK_HEIGHT)
-            .unwrap()
-            .map(|val| BigEndian::read_u32(&*val) as usize)
-            .unwrap_or(1);
-
-        let mut op_to_utxo = HashMap::new();
-        let cf = db.cf_handle(UTXO_MAP_CF).unwrap();
-        let iter = db.iterator_cf(cf, IteratorMode::Start).unwrap();
-        for (key, val) in iter {
-            let out_point: OutPoint = serde_json::from_slice(&key).unwrap();
-            let utxo: Utxo = serde_json::from_slice(&val).unwrap();
-            op_to_utxo.insert(out_point, utxo);
-        }
-
-        let cf = db.cf_handle(SECRET_KEY_CF).unwrap();
-        let iter = db.iterator_cf(cf, IteratorMode::Start).unwrap();
-
-        let public_cf = db.cf_handle(PUBLIC_KEY_CF).unwrap();
-        let public_iter = db.iterator_cf(public_cf, IteratorMode::Start).unwrap();
-
-        let internal_cf = db.cf_handle(INTERNAL_SECRET_KEY_CF).unwrap();
-        let internal_iter = db.iterator_cf(internal_cf, IteratorMode::Start).unwrap();
-
-        let internal_public_cf = db.cf_handle(INTERNAL_PUBLIC_KEY_CF).unwrap();
-        let internal_public_iter = db.iterator_cf(internal_public_cf, IteratorMode::Start).unwrap();
+        let p2wkh_account = AccountFactory::new_account(
+            master_key,
+            0,
+            AccountAddressType::P2WKH,
+            Network::Regtest,
+            Arc::clone(&db),
+        );
 
         let mut ac = AccountFactory{
-            key_factory: Arc::new(key_factory),
             master_key,
             mnemonic,
             encrypted,
-            account_list: Vec::new(),
+            p2pkh_account,
+            p2shwh_account,
+            p2wkh_account,
             network: wc.network,
             cfg: btc_cfg,
             client,
@@ -327,57 +310,31 @@ impl AccountFactory {
             op_to_utxo,
             next_lock_id: LockId::new(),
             locked_coins: LockGroupMap::new(),
-            db: Arc::new(RwLock::new(db)),
+            db,
         };
-        ac.initialize();
-        for (_, val) in &ac.op_to_utxo {
-            let guarded_acc = &*ac.account_list[usize::from(val.addr_type.clone())];
-            let acc = guarded_acc.write().unwrap();
-            acc.utxo_list.write().unwrap().insert(val.out_point, val.clone());
+        let op_to_utxo = ac.op_to_utxo.clone();
+        for (_, val) in &op_to_utxo {
+            ac.get_account_mut(val.addr_type.clone()).utxo_list.insert(val.out_point, val.clone());
         }
 
-        for (key, val) in iter {
-            let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
-            let sk: [u8; 32] = serde_json::from_slice(&val).unwrap();
-            let sk = SecretKey::from_slice(&Secp256k1::new(), &sk).unwrap();
-
-            let guarded_acc = &*ac.account_list[usize::from(key_helper.addr_type.clone())];
-            let mut acc = guarded_acc.write().unwrap();
-
-            acc.external_sk_list.push(sk);
+        let external_secret_key_list = ac.db.read().unwrap().get_external_secret_key_list();
+        for (key_helper, sk) in external_secret_key_list {
+            ac.get_account_mut(key_helper.addr_type.clone()).external_sk_list.push(sk);
         }
 
-        for (key, val) in public_iter {
-            let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
-            let pk: Vec<u8> = serde_json::from_slice(&val).unwrap();
-            let pk = PublicKey::from_slice(&Secp256k1::new(), pk.as_slice()).unwrap();
-
-            let guarded_acc = &*ac.account_list[usize::from(key_helper.addr_type.clone())];
-            let mut acc = guarded_acc.write().unwrap();
-
-            acc.external_pk_list.push(pk);
+        let external_public_key_list = ac.db.read().unwrap().get_external_public_key_list();
+        for (key_helper, pk) in external_public_key_list {
+            ac.get_account_mut(key_helper.addr_type.clone()).external_pk_list.push(pk);
         }
 
-        for (key, val) in internal_iter {
-            let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
-            let sk: [u8; 32] = serde_json::from_slice(&val).unwrap();
-            let sk = SecretKey::from_slice(&Secp256k1::new(), &sk).unwrap();
-
-            let guarded_acc = &*ac.account_list[usize::from(key_helper.addr_type.clone())];
-            let mut acc = guarded_acc.write().unwrap();
-
-            acc.internal_sk_list.push(sk);
+        let internal_secret_key_list = ac.db.read().unwrap().get_internal_secret_key_list();
+        for (key_helper, sk) in internal_secret_key_list {
+            ac.get_account_mut(key_helper.addr_type.clone()).internal_sk_list.push(sk);
         }
 
-        for (key, val) in internal_public_iter {
-            let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
-            let pk: Vec<u8> = serde_json::from_slice(&val).unwrap();
-            let pk = PublicKey::from_slice(&Secp256k1::new(), pk.as_slice()).unwrap();
-
-            let guarded_acc = &*ac.account_list[usize::from(key_helper.addr_type.clone())];
-            let mut acc = guarded_acc.write().unwrap();
-
-            acc.internal_pk_list.push(pk);
+        let internal_public_key_list = ac.db.read().unwrap().get_internal_public_key_list();
+        for (key_helper, pk) in internal_public_key_list {
+            ac.get_account_mut(key_helper.addr_type.clone()).internal_pk_list.push(pk);
         }
         Ok(ac)
     }
@@ -404,12 +361,6 @@ impl AccountFactory {
 //        })
 //    }
 
-    pub fn initialize(&mut self) {
-        self.new_account(0, AccountAddressType::P2PKH).unwrap();
-        self.new_account(0, AccountAddressType::P2SHWH).unwrap();
-        self.new_account(0, AccountAddressType::P2WKH).unwrap();
-    }
-
     /// get a copy of the master private key
     pub fn master_private (&self) -> ExtendedPrivKey {
         self.master_key.clone()
@@ -417,7 +368,7 @@ impl AccountFactory {
 
     /// get a copy of the master public key
     pub fn master_public (&self) -> ExtendedPubKey {
-        self.key_factory.extended_public_from_private(&self.master_key)
+        KeyFactory::extended_public_from_private(&self.master_key)
     }
 
     pub fn mnemonic (&self) -> String {
@@ -429,37 +380,81 @@ impl AccountFactory {
     }
 
     /// get an account
-    pub fn new_account (&mut self, account_number: u32, address_type: AccountAddressType) -> Result<Arc<RwLock<Account>>, WalletError> {
-        let mut key = match address_type {
-            AccountAddressType::P2PKH  => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened{index: 44})?,
-            AccountAddressType::P2SHWH => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened{index: 49})?,
-            AccountAddressType::P2WKH  => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened{index: 84})?,
-        };
-        key = match key.network {
-            Network::Bitcoin => self.key_factory.private_child(&key, ChildNumber::Hardened{index: 0})?,
-            Network::Testnet => self.key_factory.private_child(&key, ChildNumber::Hardened{index: 1})?,
-            // TODO(evg): `ChildNumber::Hardened{index: 2}` is it correct?
-            Network::Regtest => self.key_factory.private_child(&key, ChildNumber::Hardened{index: 2})?,
-        };
-        key = self.key_factory.private_child(&key, ChildNumber::Hardened{index: account_number})?;
+    pub fn extract_account_key(
+        master_key: ExtendedPrivKey,
+        account_number: u32,
+        address_type: AccountAddressType,
+    ) -> Result<ExtendedPrivKey, WalletError> {
 
-        let account = Arc::new(RwLock::new(Account::new(self.key_factory.clone(),key, address_type, self.network, Arc::clone(&self.db))));
-        self.account_list.push(Arc::clone(&account));
-        Ok(account)
+        let mut key = match address_type {
+            AccountAddressType::P2PKH  => KeyFactory::private_child(
+                &master_key,
+                ChildNumber::Hardened{index: 44},
+            )?,
+            AccountAddressType::P2SHWH => KeyFactory::private_child(
+                &master_key,
+                ChildNumber::Hardened{index: 49},
+            )?,
+            AccountAddressType::P2WKH  => KeyFactory::private_child(
+                &master_key,
+                ChildNumber::Hardened{index: 84},
+            )?,
+        };
+
+        key = match key.network {
+            Network::Bitcoin => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 0})?,
+            Network::Testnet => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 1})?,
+            // TODO(evg): `ChildNumber::Hardened{index: 2}` is it correct?
+            Network::Regtest => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 2})?,
+        };
+
+        key = KeyFactory::private_child(&key, ChildNumber::Hardened{index: account_number})?;
+
+        Ok(key)
     }
 
-    pub fn get_account(&self, address_type: AccountAddressType) -> Arc<RwLock<Account>> {
-        let index: usize = address_type.into();
-        Arc::clone(&self.account_list[index])
+    fn new_account(
+        master_key: ExtendedPrivKey,
+        account_number: u32,
+        address_type: AccountAddressType,
+        network: Network,
+        db: Arc<RwLock<DB>>,
+    ) -> Account {
+        let key = AccountFactory::extract_account_key(
+            master_key,
+            account_number,
+            address_type.clone(),
+        ).unwrap();
+
+        Account::new(
+            key,
+            address_type,
+            network,
+            Arc::clone(&db),
+        )
+    }
+
+    pub fn get_account(&self, address_type: AccountAddressType) -> &Account {
+        match address_type {
+            AccountAddressType::P2PKH  => &self.p2pkh_account,
+            AccountAddressType::P2SHWH => &self.p2shwh_account,
+            AccountAddressType::P2WKH  => &self.p2wkh_account,
+        }
+    }
+
+    pub fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
+        match address_type {
+            AccountAddressType::P2PKH  => &mut self.p2pkh_account,
+            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
+            AccountAddressType::P2WKH  => &mut self.p2wkh_account,
+        }
     }
 
     pub fn get_utxo_list(&self) -> Vec<Utxo> {
         let mut joined = Vec::new();
-        for account in &self.account_list {
-            let account_utxo_list = &account.read().unwrap().get_utxo_list();
-            // joined.extend_from_slice(&*account_utxo_list.read().unwrap());
-            let account_utxo_list = &*account_utxo_list.read().unwrap();
-            for (_, val) in account_utxo_list {
+        for account in &[&self.p2pkh_account, &self.p2shwh_account, &self.p2wkh_account] {
+            let account_utxo_list = &account.get_utxo_list();
+            for (_, val) in *account_utxo_list {
                 joined.push(val.clone());
             }
         }
@@ -509,10 +504,7 @@ impl AccountFactory {
             let lock_group = LockGroup(subset);
             self.locked_coins.lock_group(self.next_lock_id.clone(), lock_group.clone());
 
-            let cf = self.db.read().unwrap().cf_handle(LOCK_GROUP_MAP_CF).unwrap();
-            let key = serde_json::to_vec(&self.next_lock_id.clone()).unwrap();
-            let value = serde_json::to_vec(&lock_group).unwrap();
-            self.db.write().unwrap().put_cf(cf, &key, &value).unwrap();
+            self.db.write().unwrap().put_lock_group(&self.next_lock_id, &lock_group);
 
             let rez = self.next_lock_id.clone();
             self.next_lock_id.incr();
@@ -558,8 +550,7 @@ impl AccountFactory {
         tx.output.push(output);
 
         let change_addr = {
-            let mut account = self.account_list[AccountAddressType::P2WKH as usize].write().unwrap();
-            let change_addr = account.new_change_address().unwrap();
+            let change_addr = self.get_account_mut(AccountAddressType::P2WKH).new_change_address().unwrap();
             Address::from_str(&change_addr).unwrap()
         };
 
@@ -574,7 +565,7 @@ impl AccountFactory {
             let op = &ops[i];
             let utxo = self.op_to_utxo.get(op).unwrap();
 
-            let account = self.account_list[utxo.account_index as usize].read().unwrap();
+            let account = self.get_account((utxo.account_index as usize).into());
 
             let ctx = Secp256k1::new();
             let sk = account.get_sk(&utxo.key_path);
@@ -653,29 +644,27 @@ impl AccountFactory {
     }
 
     pub fn process_tx(&mut self, txid: &TransactionId, tx: &BitcoinTransaction) {
-        for account_index in 0..self.account_list.len() {
-            for input_index in 0..tx.input.len() {
-                let input = &tx.input[input_index];
-                if self.op_to_utxo.contains_key(&input.previous_output) {
-                    {
-                        // remove from account utxo map
-                        let utxo = self.op_to_utxo.get(&input.previous_output).unwrap();
-                        let acc = self.account_list[usize::from(utxo.addr_type.clone())].write().unwrap();
-                        let mut utxo_map = acc.utxo_list.write().unwrap();
-                        utxo_map.remove(&input.previous_output).unwrap();
+        let account_list = &mut [&mut self.p2pkh_account, &mut self.p2shwh_account, &mut self.p2wkh_account];
 
-                        // remove from db
-                        let key = serde_json::to_vec(&utxo.out_point).unwrap();
-                        let cf = self.db.write().unwrap().cf_handle(UTXO_MAP_CF).unwrap();
-                        self.db.write().unwrap().delete_cf(cf, key.as_slice()).unwrap();
-                    }
+        for input_index in 0..tx.input.len() {
+            let input = &tx.input[input_index];
+            if self.op_to_utxo.contains_key(&input.previous_output) {
+                {
+                    // remove from account utxo map
+                    let utxo = self.op_to_utxo.get(&input.previous_output).unwrap();
+                    let mut acc = &mut account_list[usize::from(utxo.addr_type.clone())];
+                    let mut utxo_map = &mut acc.utxo_list;
+                    utxo_map.remove(&input.previous_output).unwrap();
 
-                    // remove from account_factory utxo_map
-                    self.op_to_utxo.remove(&input.previous_output).unwrap();
+                    self.db.write().unwrap().delete_utxo(&utxo.out_point);
                 }
-            }
 
-            let mut account = self.account_list[account_index].write().unwrap();
+                // remove from account_factory utxo_map
+                self.op_to_utxo.remove(&input.previous_output).unwrap();
+            }
+        }
+        for account_index in 0..account_list.len() {
+            let mut account = &mut account_list[account_index];
 
             for output_index in 0..tx.output.len() {
                 let output = &tx.output[output_index];
@@ -777,9 +766,8 @@ impl AccountFactory {
         }
         // TODO(evg): if block_height > self.last_seen_block_height?
         self.last_seen_block_height = block_height;
-        let mut buff = [0u8; 4];
-        BigEndian::write_u32(&mut buff, block_height as u32);
-        self.db.write().unwrap().put(LAST_SEEN_BLOCK_HEIGHT, &buff).unwrap();
+
+        self.db.write().unwrap().put_last_seen_block_height(block_height as u32);
     }
 
     pub fn process_block_range(&mut self, left: usize, right: usize) {
