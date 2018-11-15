@@ -18,24 +18,14 @@ extern crate secp256k1;
 extern crate bitcoin;
 extern crate rand;
 extern crate hex;
-extern crate bitcoin_rpc_client;
+// extern crate bitcoin_rpc_client;
 extern crate bitcoin_bech32;
-extern crate futures;
-extern crate futures_cpupool;
-extern crate protobuf;
-extern crate grpc;
-extern crate tls_api;
-extern crate tls_api_native_tls;
 extern crate rocksdb;
 extern crate byteorder;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
-// extern crate bincode;
 extern crate serde_json;
-extern crate crossbeam;
-extern crate zmq;
-#[macro_use]
 extern crate log;
 extern crate simple_logger;
 
@@ -44,7 +34,5 @@ pub mod error;
 pub mod keyfactory;
 pub mod accountfactory;
 pub mod account;
-pub mod server;
-pub mod walletrpc;
-pub mod walletrpc_grpc;
 mod db;
+pub mod interface;

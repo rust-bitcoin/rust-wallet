@@ -4,7 +4,6 @@ extern crate bitcoin_rpc_client;
 extern crate bitcoin;
 extern crate hex;
 extern crate wallet;
-extern crate grpc;
 extern crate rand;
 extern crate log;
 extern crate simple_logger;
@@ -15,28 +14,73 @@ use testcontainers::{
     Docker, Container,
 };
 use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, Address, SerializedRawTransaction};
-use bitcoin::network::{
-    encodable::ConsensusEncodable,
-    serialize::RawEncoder,
+use bitcoin::{
+    network::{
+        encodable::ConsensusEncodable,
+        serialize::{RawEncoder, serialize},
+    },
+    util::hash::Sha256dHash,
+    Block, BlockHeader, Transaction,
 };
 use rand::{Rng, thread_rng};
 
-use std::{
-    str::FromStr,
-    thread,
-    time::Duration,
-};
+use std::str::FromStr;
 
 use wallet::{
     account::AccountAddressType,
     accountfactory::{AccountFactory, WalletConfig, BitcoindConfig},
-    server::{launch_server, WalletClientWrapper, DEFAULT_WALLET_RPC_PORT},
-    walletrpc::AddressType,
+    interface::{Wallet, BlockChainIO},
 };
 
-const LAUNCH_SERVER_DELAY_MS: u64 = 3000;
-const SHUTDOWN_SERVER_DELAY_MS: u64 = 2000;
-const ZMQ_BLOCK_NTFN_DELAY_MS: u64 = 1000;
+struct BitcoinCoreIO(BitcoinCoreClient);
+
+impl BlockChainIO for BitcoinCoreIO {
+    fn get_block_count(&self) -> u32 {
+        self.0.get_block_count()
+            .unwrap()
+            .unwrap()
+            .into()
+    }
+
+    fn get_block_hash(&self, height: u32) -> Sha256dHash {
+        self.0.get_block_hash(height)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn get_block(&self, header_hash: &Sha256dHash) -> Block {
+        let block = self.0.get_block(header_hash)
+            .unwrap()
+            .unwrap();
+
+        // TODO(evg): review it
+        let header = BlockHeader {
+            version: block.version,
+            prev_blockhash: block.previousblockhash.unwrap(),
+            merkle_root: Sha256dHash::from_hex(&block.merkleroot).unwrap(),
+            time: block.time as u32,
+            bits: 0,
+            nonce: block.nonce,
+        };
+        let mut txdata = Vec::new();
+        for txid in &block.tx {
+            let tx_hex = self.0.get_raw_transaction_serialized(&txid)
+                .unwrap()
+                .unwrap();
+            let tx: Transaction = Transaction::from(tx_hex);
+            txdata.push(tx);
+        }
+
+        Block {
+            header,
+            txdata,
+        }
+    }
+
+    fn send_raw_transaction(&self, tx: &Transaction) {
+        self.0.send_raw_transaction(SerializedRawTransaction::from(tx.clone())).unwrap().unwrap();
+    }
+}
 
 fn bitcoind_init(node: &Container<DockerCli, BitcoinCore>) -> (BitcoinCoreClient, BitcoindConfig) {
     let host_port = node.get_host_port(18443).unwrap();
@@ -50,36 +94,32 @@ fn bitcoind_init(node: &Container<DockerCli, BitcoinCore>) -> (BitcoinCoreClient
     (client, cfg)
 }
 
-fn launch_server_and_wait(db_path: String, cfg: BitcoindConfig) -> WalletClientWrapper {
-    thread::spawn(move || {
-        launch_server(WalletConfig::with_db_path(db_path), cfg, DEFAULT_WALLET_RPC_PORT);
-    });
-    thread::sleep(Duration::from_millis(LAUNCH_SERVER_DELAY_MS));
-    let client = WalletClientWrapper::new(DEFAULT_WALLET_RPC_PORT);
-    client
-}
-
-fn shutdown_and_wait(client: &WalletClientWrapper) {
-    client.shutdown();
-    thread::sleep(Duration::from_millis(SHUTDOWN_SERVER_DELAY_MS));
-}
-
-fn restart_wallet(client: &WalletClientWrapper, db_path: String, cfg: BitcoindConfig) {
-    shutdown_and_wait(client);
-    launch_server_and_wait(db_path, cfg);
-}
-
-fn generate_and_wait(client: &BitcoinCoreClient, number_of_blocks: u32) {
-    client.generate(number_of_blocks).unwrap().unwrap();
-    // wait until zmq inform us about newly generated block
-    thread::sleep(Duration::from_millis(ZMQ_BLOCK_NTFN_DELAY_MS));
-}
-
 fn tmp_db_path() -> String {
     let mut rez: String = "/tmp/test_".to_string();
     let suffix: String = thread_rng().gen_ascii_chars().take(10).collect();
     rez.push_str(&suffix);
     rez
+}
+
+fn generate_money_for_wallet(af: &mut AccountFactory, bitcoind_client: &BitcoinCoreClient) {
+    let addr = af.get_account_mut(AccountAddressType::P2PKH).new_address().unwrap();
+    let change_addr = af.get_account_mut(AccountAddressType::P2PKH).new_change_address().unwrap();
+    bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
+    bitcoind_client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
+
+    let addr = af.get_account_mut(AccountAddressType::P2SHWH).new_address().unwrap();
+    let change_addr = af.get_account_mut(AccountAddressType::P2SHWH).new_change_address().unwrap();
+    bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
+    bitcoind_client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
+
+    let addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
+    let change_addr = af.get_account_mut(AccountAddressType::P2WKH).new_change_address().unwrap();
+    bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
+    bitcoind_client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
+
+    bitcoind_client.generate(1).unwrap().unwrap();
+    af.sync_with_blockchain();
+    assert_eq!(af.wallet_balance(), 600_000_000);
 }
 
 #[test]
@@ -89,39 +129,10 @@ fn test_base_wallet_functionality() {
     let (client, cfg) = bitcoind_init(&node);
     client.generate(110).unwrap().unwrap();
 
+    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
     let mut ac = AccountFactory::new_no_random(
-        WalletConfig::with_db_path(tmp_db_path()), cfg).unwrap();
-    {
-        // let guarded = ac.get_account(AccountAddressType::P2PKH);
-        // let mut p2pkh_account = guarded.write().unwrap();
-        let p2pkh_account = ac.get_account_mut(AccountAddressType::P2PKH);
-        let addr = p2pkh_account.new_address().unwrap();
-        let change_addr = p2pkh_account.new_change_address().unwrap();
-        client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-        client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
-    }
-
-    {
-        // let guarded = ac.get_account(AccountAddressType::P2SHWH);
-        // let mut p2shwh_account = guarded.write().unwrap();
-        let p2shwh_account = ac.get_account_mut(AccountAddressType::P2SHWH);
-        let addr = p2shwh_account.new_address().unwrap();
-        let change_addr = p2shwh_account.new_change_address().unwrap();
-        client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-        client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
-    }
-
-    let p2wkh_addr = {
-        // let guarded = ac.get_account(AccountAddressType::P2WKH);
-        // let mut p2wkh_account = guarded.write().unwrap();
-        let mut p2wkh_account = ac.get_account_mut(AccountAddressType::P2WKH);
-        let addr = p2wkh_account.new_address().unwrap();
-        let change_addr = p2wkh_account.new_change_address().unwrap();
-        client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-        client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
-
-        p2wkh_account.new_address().unwrap()
-    };
+        WalletConfig::with_db_path(tmp_db_path()), bio).unwrap();
+    generate_money_for_wallet(&mut ac, &client);
 
     client.generate(1).unwrap().unwrap();
     ac.sync_with_blockchain();
@@ -133,34 +144,29 @@ fn test_base_wallet_functionality() {
         ops.push(utxo.out_point);
     }
 
-    let tx = ac.make_tx(ops, p2wkh_addr, 150_000_000).unwrap();
-
+    let p2wkh_addr = ac.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
     // check that generated transaction valid and can be send to blockchain
-    let writer: Vec<u8> = Vec::new();
-    let mut encoder = RawEncoder::new(writer);
-    tx.consensus_encode(&mut encoder).unwrap();
+    let tx = ac.make_tx(ops, p2wkh_addr, 150_000_000, true).unwrap();
 
-    let txid = client.send_raw_transaction(SerializedRawTransaction::from(tx)).unwrap().unwrap();
-    client.get_raw_transaction_serialized(&txid).unwrap().unwrap();
+    // client.get_raw_transaction_serialized(&txid).unwrap().unwrap();
 }
 
 #[test]
 fn test_base_client_server_functionality() {
-    simple_logger::init_with_level(log::Level::Info).unwrap();
-
     let docker = DockerCli::new();
     let node = docker.run(BitcoinCore::default());
     let (bitcoind_client, cfg) = bitcoind_init(&node);
     bitcoind_client.generate(110).unwrap().unwrap();
 
-    let client = launch_server_and_wait(tmp_db_path(), cfg);
+    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let mut af = AccountFactory::new_no_random(
+        WalletConfig::with_db_path(tmp_db_path()), bio).unwrap();
 
-    let addr = client.new_address(AddressType::P2WKH);
+    let addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
     bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-    generate_and_wait(&bitcoind_client, 1);
-    assert_eq!(client.wallet_balance(), 100_000_000);
-
-    shutdown_and_wait(&client);
+    bitcoind_client.generate(1).unwrap().unwrap();
+    af.sync_with_blockchain();
+    assert_eq!(af.wallet_balance(), 100_000_000);
 }
 
 #[test]
@@ -171,45 +177,32 @@ fn test_base_persistent_storage() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let client = launch_server_and_wait(db_path.clone(), cfg.clone());
 
-    let addr = client.new_address(AddressType::P2WKH);
-    bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-    generate_and_wait(&bitcoind_client, 1);
-    assert_eq!(client.wallet_balance(), 100_000_000);
+    {
+        let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let mut af = AccountFactory::new_no_random(
+            WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
-    restart_wallet(&client, db_path, cfg);
+        let addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
+        bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
+        bitcoind_client.generate(1).unwrap().unwrap();
+        af.sync_with_blockchain();
+        assert_eq!(af.wallet_balance(), 100_000_000);
+    }
+
+    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let mut af = AccountFactory::new_no_random(
+        WalletConfig::with_db_path(db_path), bio).unwrap();
 
     // balance should not change after restart
-    assert_eq!(client.wallet_balance(), 100_000_000);
+    assert_eq!(af.wallet_balance(), 100_000_000);
 
     // wallet should remain viable after restart
-    let addr = client.new_address(AddressType::P2WKH);
+    let addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
     bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-    generate_and_wait(&bitcoind_client, 1);
-    assert_eq!(client.wallet_balance(), 200_000_000);
-
-    shutdown_and_wait(&client);
-}
-
-fn generate_money_for_wallet(client: &WalletClientWrapper, bitcoind_client: &BitcoinCoreClient) {
-    let addr = client.new_address(AddressType::P2PKH);
-    let change_addr = client.new_change_address(AddressType::P2PKH);
-    bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-    bitcoind_client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
-
-    let addr = client.new_address(AddressType::P2SHWH);
-    let change_addr = client.new_change_address(AddressType::P2SHWH);
-    bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-    bitcoind_client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
-
-    let addr = client.new_address(AddressType::P2WKH);
-    let change_addr = client.new_change_address(AddressType::P2WKH);
-    bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
-    bitcoind_client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
-
-    generate_and_wait(&bitcoind_client, 1);
-    assert_eq!(client.wallet_balance(), 600_000_000);
+    bitcoind_client.generate(1).unwrap().unwrap();
+    af.sync_with_tip();
+    assert_eq!(af.wallet_balance(), 200_000_000);
 }
 
 #[test]
@@ -220,27 +213,43 @@ fn test_base_wallet_functionality_cs_api() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let client = launch_server_and_wait(db_path.clone(), cfg.clone());
 
-    generate_money_for_wallet(&client, &bitcoind_client);
+    {
+        let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let mut af = AccountFactory::new_no_random(
+            WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
-    restart_wallet(&client, db_path.clone(), cfg.clone());
+        generate_money_for_wallet(&mut af, &bitcoind_client);
+    }
 
-    let dest_addr = client.new_address(AddressType::P2WKH);
-    let tx: &str = &hex::encode(client.make_tx(true, Vec::new(), dest_addr, 150_000_000, false));
-    let txid = bitcoind_client.send_raw_transaction(SerializedRawTransaction::from(tx)).unwrap().unwrap();
-    bitcoind_client.get_raw_transaction_serialized(&txid).unwrap().unwrap();
-    generate_and_wait(&bitcoind_client, 1);
+    {
+        let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let mut af = AccountFactory::new_no_random(
+            WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
-    // wallet send money to itself, so balance decreased only by fee
-    assert_eq!(client.wallet_balance(), 600_000_000 - 10_000);
+        let dest_addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
+        let utxo_list = af.get_utxo_list();
+        let mut ops = Vec::new();
+        for utxo in &utxo_list {
+            ops.push(utxo.out_point);
+        }
+        af.make_tx(ops, dest_addr, 150_000_000, true).unwrap();
+        // TODO(evg): remove it?
+        // bitcoind_client.get_raw_transaction_serialized(&txid).unwrap().unwrap();
+        bitcoind_client.generate(1).unwrap().unwrap();
+        af.sync_with_blockchain();
 
-    restart_wallet(&client, db_path, cfg);
+        // wallet send money to itself, so balance decreased only by fee
+        assert_eq!(af.wallet_balance(), 600_000_000 - 10_000);
+    }
 
-    // balance should not change after restart
-    assert_eq!(client.wallet_balance(), 600_000_000 - 10_000);
-
-    shutdown_and_wait(&client);
+    {
+        let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let mut af = AccountFactory::new_no_random(
+            WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
+        // balance should not change after restart
+        assert_eq!(af.wallet_balance(), 600_000_000 - 10_000);
+    }
 }
 
 #[test]
@@ -251,23 +260,27 @@ fn test_make_tx_call() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let client = launch_server_and_wait(db_path.clone(), cfg.clone());
+    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let mut af = AccountFactory::new_no_random(
+        WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
-    generate_money_for_wallet(&client, &bitcoind_client);
+    generate_money_for_wallet(&mut af, &bitcoind_client);
 
     // select utxo subset
-    let utxo_list = client.get_utxo_list();
+    let utxo_list = af.get_utxo_list();
     let mut ops = Vec::new();
-    ops.push(utxo_list[0].out_point.clone().unwrap());
-    ops.push(utxo_list[1].out_point.clone().unwrap());
+    ops.push(utxo_list[0].out_point.clone());
+    ops.push(utxo_list[1].out_point.clone());
 
-    let dest_addr = client.new_address(AddressType::P2WKH);
-    client.make_tx(false, ops, dest_addr, 150_000_000, true);
-    generate_and_wait(&bitcoind_client, 1);
+    let dest_addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
+    af.make_tx(ops, dest_addr, 150_000_000, true).unwrap();
+    // TODO(evg): get tx assert
+    bitcoind_client.generate(1).unwrap().unwrap();
+    af.sync_with_tip();
 
-    assert_eq!(client.wallet_balance(), 600_000_000 - 10_000);
+    assert_eq!(af.wallet_balance(), 600_000_000 - 10_000);
 
-    let utxo_list = client.get_utxo_list();
+    let utxo_list = af.get_utxo_list();
     let mut ok = false;
     for utxo in &utxo_list {
         if utxo.value == 200_000_000 - 150_000_000 - 10_000 {
@@ -275,8 +288,6 @@ fn test_make_tx_call() {
         }
     }
     assert!(ok);
-
-    shutdown_and_wait(&client);
 }
 
 #[test]
@@ -287,17 +298,23 @@ fn test_send_coins_call() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let client = launch_server_and_wait(db_path.clone(), cfg.clone());
+    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let mut af = AccountFactory::new_no_random(
+        WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
-    generate_money_for_wallet(&client, &bitcoind_client);
+    generate_money_for_wallet(&mut af, &bitcoind_client);
 
-    let dest_addr = client.new_address(AddressType::P2WKH);
-    client.send_coins(dest_addr, 150_000_000, true, false).unwrap();
-    generate_and_wait(&bitcoind_client, 1);
+    let dest_addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
+    af.send_coins(dest_addr, 150_000_000, false, false, true).unwrap();
+    // TODO(evg): add get assertions
 
-    assert_eq!(client.wallet_balance(), 600_000_000 - 10_000);
+    bitcoind_client.generate(1).unwrap().unwrap();
+    af.sync_with_blockchain();
 
-    let utxo_list = client.get_utxo_list();
+
+    assert_eq!(af.wallet_balance(), 600_000_000 - 10_000);
+
+    let utxo_list = af.get_utxo_list();
     let mut ok = false;
     for utxo in &utxo_list {
         if utxo.value == 200_000_000 - 150_000_000 - 10_000 {
@@ -305,8 +322,6 @@ fn test_send_coins_call() {
         }
     }
     assert!(ok);
-
-    shutdown_and_wait(&client);
 }
 
 #[test]
@@ -317,22 +332,24 @@ fn test_lock_coins_flag_success() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let client = launch_server_and_wait(db_path.clone(), cfg.clone());
+    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let mut af = AccountFactory::new_no_random(
+        WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
-    generate_money_for_wallet(&client, &bitcoind_client);
+    generate_money_for_wallet(&mut af, &bitcoind_client);
 
-    let dest_addr = client.new_address(AddressType::P2WKH);
-    client.send_coins(dest_addr.clone(), 200_000_000 - 10_000, false, true).unwrap();
-    let (_, lock_id) = client.send_coins(dest_addr.clone(), 200_000_000 - 10_000, false, true).unwrap();
-    client.unlock_coins(lock_id);
+    let dest_addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
+    af.send_coins(dest_addr.clone(), 200_000_000 - 10_000, true, false, false).unwrap();
+    af.send_coins(dest_addr.clone(), 200_000_000 - 10_000, true, false, false).unwrap();
+    let (_, lock_id) = af.send_coins(dest_addr.clone(), 200_000_000 - 10_000, true, false, false).unwrap();
+    af.unlock_coins(lock_id);
 
-    client.send_coins(dest_addr, 200_000_000 - 10_000, true, true).unwrap();
-    shutdown_and_wait(&client);
+    let (tx, _) = af.send_coins(dest_addr, 200_000_000 - 10_000, true, false, false).unwrap();
+    let tx: &str = &hex::encode(serialize(&tx).unwrap());
+    bitcoind_client.send_raw_transaction(SerializedRawTransaction::from(tx)).unwrap().unwrap();
 }
 
 #[test]
-// #[ignore]
-// #[should_panic]
 fn test_lock_coins_flag() {
     let docker = DockerCli::new();
     let node = docker.run(BitcoinCore::default());
@@ -340,19 +357,21 @@ fn test_lock_coins_flag() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let client = launch_server_and_wait(db_path.clone(), cfg.clone());
+    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let mut af = AccountFactory::new_no_random(
+        WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
-    generate_money_for_wallet(&client, &bitcoind_client);
 
-    let dest_addr = client.new_address(AddressType::P2WKH);
-    client.send_coins(dest_addr.clone(), 200_000_000 - 10_000, false, true).unwrap();
-    client.send_coins(dest_addr.clone(), 200_000_000 - 10_000, false, true).unwrap();
-    client.send_coins(dest_addr.clone(), 200_000_000 - 10_000, false, true).unwrap();
+    generate_money_for_wallet(&mut af, &bitcoind_client);
+
+    let dest_addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
+    af.send_coins(dest_addr.clone(), 200_000_000 - 10_000, true, false, false).unwrap();
+    af.send_coins(dest_addr.clone(), 200_000_000 - 10_000, true, false, false).unwrap();
+    af.send_coins(dest_addr.clone(), 200_000_000 - 10_000, true, false, false).unwrap();
 
     // should panic, no available coins left
-    let rez = client.send_coins(dest_addr, 200_000_000 - 10_000, true, false);
+    let rez = af.send_coins(dest_addr, 200_000_000 - 10_000, false, false, true);
     assert!(rez.is_err());
-    shutdown_and_wait(&client);
 }
 
 // TODO(evg): tests for lock persistence

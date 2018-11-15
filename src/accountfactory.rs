@@ -26,14 +26,13 @@ use bitcoin::{
         address::Address,
     },
 
-    blockdata::transaction::{OutPoint, Transaction as BitcoinTransaction, TxIn, TxOut},
+    blockdata::transaction::{OutPoint, Transaction, TxIn, TxOut},
     blockdata::script::{Script, Builder},
-    blockdata::block::Block as WireBlock,
+    blockdata::block::Block,
 
     network::constants::Network,
 };
 use secp256k1::{Secp256k1, PublicKey, Message};
-use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, TransactionId, Block};
 
 use std::{
     error::Error,
@@ -47,6 +46,7 @@ use mnemonic::Mnemonic;
 use keyfactory::{KeyFactory, MasterKeyEntropy};
 use account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain};
 use db::DB;
+use interface::{Wallet, BlockChainIO};
 
 pub static DEFAULT_BITCOIND_RPC_CONNECT: &'static str = "http://127.0.0.1:18332";
 pub static DEFAULT_BITCOIND_RPC_USER: &'static str = "user";
@@ -62,9 +62,9 @@ pub static DEFAULT_DB_PATH: &'static str = "rocks.db";
 
 #[derive(Clone)]
 pub struct BitcoindConfig {
-    url:      String,
-    user:     String,
-    password: String,
+    pub url:      String,
+    pub user:     String,
+    pub password: String,
     pub zmq_pub_raw_block: String,
     zmq_pub_raw_tx:    String,
 }
@@ -223,9 +223,10 @@ pub struct AccountFactory {
     p2wkh_account: Account,
     #[allow(dead_code)]
     network: Network,
-    #[allow(dead_code)]
-    cfg: BitcoindConfig,
-    pub client: BitcoinCoreClient,
+
+    // TODO(evg): bio
+    bio: Box<BlockChainIO>,
+
     last_seen_block_height: usize,
     op_to_utxo: HashMap<OutPoint, Utxo>,
     next_lock_id: LockId,
@@ -233,6 +234,230 @@ pub struct AccountFactory {
     db: Arc<RwLock<DB>>,
 }
 
+impl Wallet for AccountFactory {
+    fn get_account(&self, address_type: AccountAddressType) -> &Account {
+        match address_type {
+            AccountAddressType::P2PKH  => &self.p2pkh_account,
+            AccountAddressType::P2SHWH => &self.p2shwh_account,
+            AccountAddressType::P2WKH  => &self.p2wkh_account,
+        }
+    }
+
+    fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
+        match address_type {
+            AccountAddressType::P2PKH  => &mut self.p2pkh_account,
+            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
+            AccountAddressType::P2WKH  => &mut self.p2wkh_account,
+        }
+    }
+
+    fn get_utxo_list(&self) -> Vec<Utxo> {
+        let mut joined = Vec::new();
+        for account in &[&self.p2pkh_account, &self.p2shwh_account, &self.p2wkh_account] {
+            let account_utxo_list = &account.get_utxo_list();
+            for (_, val) in *account_utxo_list {
+                joined.push(val.clone());
+            }
+        }
+        joined
+    }
+
+    fn wallet_balance(&self) -> u64 {
+        let utxo_list = self.get_utxo_list();
+
+        let mut balance: u64 = 0;
+        for utxo in utxo_list {
+            balance += utxo.value;
+        }
+        balance
+    }
+
+    fn unlock_coins(&mut self, lock_id: LockId) {
+        self.locked_coins.unlock_group(lock_id);
+    }
+
+    fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool, submit: bool) -> Result<(Transaction, LockId), Box<Error>> {
+        let utxo_list = self.get_utxo_list();
+
+        let mut total = 0;
+        let mut subset = Vec::new();
+        for utxo in utxo_list {
+            if self.locked_coins.is_locked(&utxo.out_point) {
+                continue
+            }
+
+            if witness_only {
+                if utxo.addr_type != AccountAddressType::P2WKH {
+                    continue
+                }
+            }
+
+            total += utxo.value;
+            subset.push(utxo.out_point);
+
+            if total >= amt + 10000 {
+                break
+            }
+        }
+
+        let tx = self.make_tx(subset.clone(), addr_str, amt, submit)?;
+        if lock_coins {
+            let lock_group = LockGroup(subset);
+            self.locked_coins.lock_group(self.next_lock_id.clone(), lock_group.clone());
+
+            self.db.write().unwrap().put_lock_group(&self.next_lock_id, &lock_group);
+
+            let rez = self.next_lock_id.clone();
+            self.next_lock_id.incr();
+            return Ok((tx, rez));
+        };
+
+        Ok((tx, LockId::new()))
+    }
+
+    // TODO(evg): add version, lock_time param?
+    fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64, submit: bool) -> Result<Transaction, Box<Error>> {
+        let addr: Address = Address::from_str(&addr_str).unwrap();
+
+        let mut tx = Transaction {
+            version:   0,
+            lock_time: 0,
+            input:     Vec::new(),
+            output:    Vec::new(),
+        };
+
+        let mut total = 0;
+        for op in &ops {
+            let utxo = self.op_to_utxo.get(op).unwrap();
+            total += utxo.value;
+
+            let input = TxIn{
+                previous_output: *op,
+                script_sig:      Script::new(),
+                sequence:        0xFFFFFFFF,
+                witness:         Vec::new(),
+            };
+            tx.input.push(input);
+        }
+
+        if total < (amt + 10_000) {
+            return Err(From::from("something went wrong..."));
+        }
+
+        // dest output
+        let output = TxOut{
+            value: amt,
+            script_pubkey: addr.script_pubkey(),
+        };
+        tx.output.push(output);
+
+        let change_addr = {
+            let change_addr = self.get_account_mut(AccountAddressType::P2WKH).new_change_address().unwrap();
+            Address::from_str(&change_addr).unwrap()
+        };
+
+        let change_output = TxOut{
+            value: total - amt - 10_000, // subtract fee
+            script_pubkey: change_addr.script_pubkey(),
+        };
+        tx.output.push(change_output);
+
+        // sign tx
+        for i in 0..ops.len() {
+            let op = &ops[i];
+            let utxo = self.op_to_utxo.get(op).unwrap();
+
+            let account = self.get_account((utxo.account_index as usize).into());
+
+            let ctx = Secp256k1::new();
+            let sk = account.get_sk(&utxo.key_path);
+            let pk = PublicKey::from_secret_key(&ctx, &sk);
+
+            // TODO(evg): do not hardcode bitcoin's network param
+            match utxo.addr_type {
+                AccountAddressType::P2PKH => {
+                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
+
+                    // TODO(evg): use SigHashType enum
+                    let signature = ctx.sign(
+                        &Message::from(tx.signature_hash(i, &pk_script, 0x1).into_bytes()),
+                        &sk,
+                    );
+
+                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    serialized_sig.push(0x1);
+
+                    let script = Builder::new()
+                        .push_slice(serialized_sig.as_slice())
+                        .push_slice(&pk.serialize())
+                        .into_script();
+                    tx.input[i].script_sig = script;
+                },
+                AccountAddressType::P2SHWH => {
+                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
+                    let pk_script_p2wpkh = Address::p2wpkh(&pk, Network::Bitcoin).script_pubkey();
+
+                    let tx_sig_hash = bip143::SighashComponents::new(&tx).
+                        sighash_all(
+                            &tx.input[i],
+                            &pk_script,
+                            utxo.value,
+                        );
+
+                    let signature = ctx.sign(
+                        &Message::from(tx_sig_hash.into_bytes()),
+                        &sk,
+                    );
+
+                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    serialized_sig.push(0x1);
+
+                    tx.input[i].witness.push(serialized_sig);
+                    tx.input[i].witness.push(pk.serialize().to_vec());
+
+                    tx.input[i].script_sig = Builder::new()
+                        .push_slice(pk_script_p2wpkh.as_bytes())
+                        .into_script();
+                },
+                AccountAddressType::P2WKH => {
+                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
+
+                    let tx_sig_hash = bip143::SighashComponents::new(&tx).
+                        sighash_all(
+                            &tx.input[i],
+                            &pk_script,
+                            utxo.value,
+                        );
+
+                    let signature = ctx.sign(
+                        &Message::from(tx_sig_hash.into_bytes()),
+                        &sk,
+                    );
+
+                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    serialized_sig.push(0x1);
+
+                    tx.input[i].witness.push(serialized_sig);
+                    tx.input[i].witness.push(pk.serialize().to_vec());
+                }
+            }
+        }
+
+        if submit {
+            self.bio.send_raw_transaction(&tx);
+        }
+
+        Ok(tx)
+    }
+
+    /// Sync from last seen(processed) block
+    fn sync_with_tip(&mut self) {
+        let block_height = self.bio.get_block_count();
+
+        let start_from = self.last_seen_block_height + 1;
+        self.process_block_range(start_from, block_height as usize);
+    }
+}
 
 impl AccountFactory {
     /// initialize with new random master key
@@ -257,7 +482,7 @@ impl AccountFactory {
 //        })
 //    }
 
-    pub fn new_no_random (wc: WalletConfig, btc_cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
+    pub fn new_no_random (wc: WalletConfig, bio: Box<BlockChainIO>) -> Result<AccountFactory, WalletError> {
         let (master_key, mnemonic, encrypted, _) =
             KeyFactory::new_master_private_key_no_random (
                 wc.entropy,
@@ -265,7 +490,6 @@ impl AccountFactory {
                 &wc.passphrase,
                 &wc.salt,
             )?;
-        let client = BitcoinCoreClient::new(&btc_cfg.url, &btc_cfg.user, &btc_cfg.password);
 
         let db = DB::new(wc.db_path);
         let last_seen_block_height = db.get_last_seen_block_height();
@@ -304,8 +528,7 @@ impl AccountFactory {
             p2shwh_account,
             p2wkh_account,
             network: wc.network,
-            cfg: btc_cfg,
-            client,
+            bio,
             last_seen_block_height,
             op_to_utxo,
             next_lock_id: LockId::new(),
@@ -434,216 +657,7 @@ impl AccountFactory {
         )
     }
 
-    pub fn get_account(&self, address_type: AccountAddressType) -> &Account {
-        match address_type {
-            AccountAddressType::P2PKH  => &self.p2pkh_account,
-            AccountAddressType::P2SHWH => &self.p2shwh_account,
-            AccountAddressType::P2WKH  => &self.p2wkh_account,
-        }
-    }
-
-    pub fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
-        match address_type {
-            AccountAddressType::P2PKH  => &mut self.p2pkh_account,
-            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
-            AccountAddressType::P2WKH  => &mut self.p2wkh_account,
-        }
-    }
-
-    pub fn get_utxo_list(&self) -> Vec<Utxo> {
-        let mut joined = Vec::new();
-        for account in &[&self.p2pkh_account, &self.p2shwh_account, &self.p2wkh_account] {
-            let account_utxo_list = &account.get_utxo_list();
-            for (_, val) in *account_utxo_list {
-                joined.push(val.clone());
-            }
-        }
-        joined
-    }
-
-    pub fn wallet_balance(&self) -> u64 {
-        let utxo_list = self.get_utxo_list();
-
-        let mut balance: u64 = 0;
-        for utxo in utxo_list {
-            balance += utxo.value;
-        }
-        balance
-    }
-
-    pub fn unlock_coins(&mut self, lock_id: LockId) {
-        self.locked_coins.unlock_group(lock_id);
-    }
-
-    pub fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool) -> Result<(BitcoinTransaction, LockId), Box<Error>> {
-        let utxo_list = self.get_utxo_list();
-
-        let mut total = 0;
-        let mut subset = Vec::new();
-        for utxo in utxo_list {
-            if self.locked_coins.is_locked(&utxo.out_point) {
-                continue
-            }
-
-            if witness_only {
-                if utxo.addr_type != AccountAddressType::P2WKH {
-                    continue
-                }
-            }
-
-            total += utxo.value;
-            subset.push(utxo.out_point);
-
-            if total >= amt + 10000 {
-                break
-            }
-        }
-
-        let tx = self.make_tx(subset.clone(), addr_str, amt)?;
-        if lock_coins {
-            let lock_group = LockGroup(subset);
-            self.locked_coins.lock_group(self.next_lock_id.clone(), lock_group.clone());
-
-            self.db.write().unwrap().put_lock_group(&self.next_lock_id, &lock_group);
-
-            let rez = self.next_lock_id.clone();
-            self.next_lock_id.incr();
-            return Ok((tx, rez));
-        };
-        Ok((tx, LockId::new()))
-    }
-
-    // TODO(evg): add version, lock_time param?
-    pub fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64) -> Result<BitcoinTransaction, Box<Error>> {
-        let addr: Address = Address::from_str(&addr_str).unwrap();
-
-        let mut tx = BitcoinTransaction {
-            version:   0,
-            lock_time: 0,
-            input:     Vec::new(),
-            output:    Vec::new(),
-        };
-
-        let mut total = 0;
-        for op in &ops {
-            let utxo = self.op_to_utxo.get(op).unwrap();
-            total += utxo.value;
-
-            let input = TxIn{
-                previous_output: *op,
-                script_sig:      Script::new(),
-                sequence:        0xFFFFFFFF,
-                witness:         Vec::new(),
-            };
-            tx.input.push(input);
-        }
-
-        if total < (amt + 10_000) {
-            return Err(From::from("something went wrong..."));
-        }
-
-        // dest output
-        let output = TxOut{
-            value: amt,
-            script_pubkey: addr.script_pubkey(),
-        };
-        tx.output.push(output);
-
-        let change_addr = {
-            let change_addr = self.get_account_mut(AccountAddressType::P2WKH).new_change_address().unwrap();
-            Address::from_str(&change_addr).unwrap()
-        };
-
-        let change_output = TxOut{
-            value: total - amt - 10_000, // subtract fee
-            script_pubkey: change_addr.script_pubkey(),
-        };
-        tx.output.push(change_output);
-
-        // sign tx
-        for i in 0..ops.len() {
-            let op = &ops[i];
-            let utxo = self.op_to_utxo.get(op).unwrap();
-
-            let account = self.get_account((utxo.account_index as usize).into());
-
-            let ctx = Secp256k1::new();
-            let sk = account.get_sk(&utxo.key_path);
-            let pk = PublicKey::from_secret_key(&ctx, &sk);
-
-            // TODO(evg): do not hardcode bitcoin's network param
-            match utxo.addr_type {
-                AccountAddressType::P2PKH => {
-                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
-
-                    // TODO(evg): use SigHashType enum
-                    let signature = ctx.sign(
-                        &Message::from(tx.signature_hash(i, &pk_script, 0x1).into_bytes()),
-                        &sk,
-                    );
-
-                    let mut serialized_sig = signature.serialize_der(&ctx);
-                    serialized_sig.push(0x1);
-
-                    let script = Builder::new()
-                        .push_slice(serialized_sig.as_slice())
-                        .push_slice(&pk.serialize())
-                        .into_script();
-                    tx.input[i].script_sig = script;
-                },
-                AccountAddressType::P2SHWH => {
-                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
-                    let pk_script_p2wpkh = Address::p2wpkh(&pk, Network::Bitcoin).script_pubkey();
-
-                    let tx_sig_hash = bip143::SighashComponents::new(&tx).
-                        sighash_all(
-                            &tx.input[i],
-                            &pk_script,
-                            utxo.value,
-                        );
-
-                    let signature = ctx.sign(
-                        &Message::from(tx_sig_hash.into_bytes()),
-                        &sk,
-                    );
-
-                    let mut serialized_sig = signature.serialize_der(&ctx);
-                    serialized_sig.push(0x1);
-
-                    tx.input[i].witness.push(serialized_sig);
-                    tx.input[i].witness.push(pk.serialize().to_vec());
-
-                    tx.input[i].script_sig = Builder::new()
-                        .push_slice(pk_script_p2wpkh.as_bytes())
-                        .into_script();
-                },
-                AccountAddressType::P2WKH => {
-                    let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
-
-                    let tx_sig_hash = bip143::SighashComponents::new(&tx).
-                        sighash_all(
-                            &tx.input[i],
-                            &pk_script,
-                            utxo.value,
-                        );
-
-                    let signature = ctx.sign(
-                        &Message::from(tx_sig_hash.into_bytes()),
-                        &sk,
-                    );
-
-                    let mut serialized_sig = signature.serialize_der(&ctx);
-                    serialized_sig.push(0x1);
-
-                    tx.input[i].witness.push(serialized_sig);
-                    tx.input[i].witness.push(pk.serialize().to_vec());
-                }
-            }
-        }
-        Ok(tx)
-    }
-
-    pub fn process_tx(&mut self, txid: &TransactionId, tx: &BitcoinTransaction) {
+    pub fn process_tx(&mut self, tx: &Transaction) {
         let account_list = &mut [&mut self.p2pkh_account, &mut self.p2shwh_account, &mut self.p2wkh_account];
 
         for input_index in 0..tx.input.len() {
@@ -684,7 +698,7 @@ impl AccountFactory {
                 };
 
                 let op = OutPoint {
-                    txid: txid.clone().into(),
+                    txid: tx.txid(),
                     vout: output_index as u32,
                 };
 
@@ -746,23 +760,9 @@ impl AccountFactory {
         }
     }
 
-    // ZMQ support
-    pub fn process_wire_block(&mut self, block: WireBlock) {
-        // TODO(evg): avoid redundant to_hex, from_hex methods
-        for tx in block.txdata {
-            self.process_tx(&TransactionId::from_str(&tx.txid().be_hex_string()).unwrap(), &tx);
-        }
-
-        // TODO(evg): update last seen block
-    }
-
-    pub fn process_block(&mut self, block_height: usize, block: &Block<TransactionId>) {
-        for txid in &block.tx {
-            let tx_hex = self.client.get_raw_transaction_serialized(&txid)
-                .unwrap()
-                .unwrap();
-            let tx: BitcoinTransaction = BitcoinTransaction::from(tx_hex);
-            self.process_tx(&txid, &tx);
+    fn process_block(&mut self, block_height: usize, block: &Block) {
+        for tx in &block.txdata {
+            self.process_tx(&tx);
         }
         // TODO(evg): if block_height > self.last_seen_block_height?
         self.last_seen_block_height = block_height;
@@ -770,39 +770,18 @@ impl AccountFactory {
         self.db.write().unwrap().put_last_seen_block_height(block_height as u32);
     }
 
-    pub fn process_block_range(&mut self, left: usize, right: usize) {
+    fn process_block_range(&mut self, left: usize, right: usize) {
         for i in left..right+1 {
-            let block_hash = self.client.get_block_hash(i as u32)
-                .unwrap()
-                .unwrap();
-
-            let block = self.client.get_block(&block_hash)
-                .unwrap()
-                .unwrap();
-
+            let block_hash = self.bio.get_block_hash(i as u32);
+            let block = self.bio.get_block(&block_hash);
             self.process_block(i, &block);
         }
     }
 
-    // TODO(evg): impl error handling
     /// Initial sync with blockchain
     pub fn sync_with_blockchain(&mut self) {
-        let block_height = self.client.get_block_count()
-            .unwrap()
-            .unwrap()
-            .as_i64();
+        let block_height = self.bio.get_block_count();
 
         self.process_block_range(1, block_height as usize);
-    }
-
-    /// Sync from last seen(processed) block
-    pub fn sync_with_tip(&mut self) {
-        let block_height = self.client.get_block_count()
-            .unwrap()
-            .unwrap()
-            .as_i64();
-
-        let start_from = self.last_seen_block_height + 1;
-        self.process_block_range(start_from, block_height as usize);
     }
 }
