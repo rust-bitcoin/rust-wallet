@@ -1,0 +1,9 @@
+[package]
+name = "bitcoin_core_io"
+version = "0.1.0"
+authors = ["evgeniy.scherbina <evgeniy.scherbina@bitfury.com>"]
+
+[dependencies]
+bitcoin = "0.14.2"
+bitcoin_rpc_client = { git = "https://github.com/rust-bitcoin-tools/bitcoinrpc_rust_client.git", branch = "enhancement" }
+wallet = { path = "../wallet" }

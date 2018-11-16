@@ -7,80 +7,24 @@ extern crate wallet;
 extern crate rand;
 extern crate log;
 extern crate simple_logger;
+extern crate bitcoin_core_io;
 
 use tc_coblox_bitcoincore::BitcoinCore;
 use testcontainers::{
     clients::DockerCli,
     Docker, Container,
 };
-use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, Address, SerializedRawTransaction};
-use bitcoin::{
-    network::{
-        encodable::ConsensusEncodable,
-        serialize::{RawEncoder, serialize},
-    },
-    util::hash::Sha256dHash,
-    Block, BlockHeader, Transaction,
-};
+use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, Address};
 use rand::{Rng, thread_rng};
+use bitcoin_core_io::BitcoinCoreIO;
 
 use std::str::FromStr;
 
 use wallet::{
     account::AccountAddressType,
     accountfactory::{AccountFactory, WalletConfig, BitcoindConfig},
-    interface::{Wallet, BlockChainIO},
+    interface::Wallet,
 };
-
-struct BitcoinCoreIO(BitcoinCoreClient);
-
-impl BlockChainIO for BitcoinCoreIO {
-    fn get_block_count(&self) -> u32 {
-        self.0.get_block_count()
-            .unwrap()
-            .unwrap()
-            .into()
-    }
-
-    fn get_block_hash(&self, height: u32) -> Sha256dHash {
-        self.0.get_block_hash(height)
-            .unwrap()
-            .unwrap()
-    }
-
-    fn get_block(&self, header_hash: &Sha256dHash) -> Block {
-        let block = self.0.get_block(header_hash)
-            .unwrap()
-            .unwrap();
-
-        // TODO(evg): review it
-        let header = BlockHeader {
-            version: block.version,
-            prev_blockhash: block.previousblockhash.unwrap(),
-            merkle_root: Sha256dHash::from_hex(&block.merkleroot).unwrap(),
-            time: block.time as u32,
-            bits: 0,
-            nonce: block.nonce,
-        };
-        let mut txdata = Vec::new();
-        for txid in &block.tx {
-            let tx_hex = self.0.get_raw_transaction_serialized(&txid)
-                .unwrap()
-                .unwrap();
-            let tx: Transaction = Transaction::from(tx_hex);
-            txdata.push(tx);
-        }
-
-        Block {
-            header,
-            txdata,
-        }
-    }
-
-    fn send_raw_transaction(&self, tx: &Transaction) {
-        self.0.send_raw_transaction(SerializedRawTransaction::from(tx.clone())).unwrap().unwrap();
-    }
-}
 
 fn bitcoind_init(node: &Container<DockerCli, BitcoinCore>) -> (BitcoinCoreClient, BitcoindConfig) {
     let host_port = node.get_host_port(18443).unwrap();
@@ -118,7 +62,7 @@ fn generate_money_for_wallet(af: &mut AccountFactory, bitcoind_client: &BitcoinC
     bitcoind_client.send_to_address(&Address::from_str(&change_addr).unwrap(), 1.0).unwrap().unwrap();
 
     bitcoind_client.generate(1).unwrap().unwrap();
-    af.sync_with_blockchain();
+    af.sync_with_tip();
     assert_eq!(af.wallet_balance(), 600_000_000);
 }
 
@@ -129,13 +73,13 @@ fn test_base_wallet_functionality() {
     let (client, cfg) = bitcoind_init(&node);
     client.generate(110).unwrap().unwrap();
 
-    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
     let mut ac = AccountFactory::new_no_random(
         WalletConfig::with_db_path(tmp_db_path()), bio).unwrap();
     generate_money_for_wallet(&mut ac, &client);
 
     client.generate(1).unwrap().unwrap();
-    ac.sync_with_blockchain();
+    ac.sync_with_tip();
 
     // select all available utxos
     let utxo_list = ac.get_utxo_list();
@@ -146,7 +90,7 @@ fn test_base_wallet_functionality() {
 
     let p2wkh_addr = ac.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
     // check that generated transaction valid and can be send to blockchain
-    let tx = ac.make_tx(ops, p2wkh_addr, 150_000_000, true).unwrap();
+    ac.make_tx(ops, p2wkh_addr, 150_000_000, true).unwrap();
 
     // client.get_raw_transaction_serialized(&txid).unwrap().unwrap();
 }
@@ -158,14 +102,14 @@ fn test_base_client_server_functionality() {
     let (bitcoind_client, cfg) = bitcoind_init(&node);
     bitcoind_client.generate(110).unwrap().unwrap();
 
-    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
     let mut af = AccountFactory::new_no_random(
         WalletConfig::with_db_path(tmp_db_path()), bio).unwrap();
 
     let addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
     bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
     bitcoind_client.generate(1).unwrap().unwrap();
-    af.sync_with_blockchain();
+    af.sync_with_tip();
     assert_eq!(af.wallet_balance(), 100_000_000);
 }
 
@@ -179,18 +123,18 @@ fn test_base_persistent_storage() {
     let db_path = tmp_db_path();
 
     {
-        let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
         let mut af = AccountFactory::new_no_random(
             WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
         let addr = af.get_account_mut(AccountAddressType::P2WKH).new_address().unwrap();
         bitcoind_client.send_to_address(&Address::from_str(&addr).unwrap(), 1.0).unwrap().unwrap();
         bitcoind_client.generate(1).unwrap().unwrap();
-        af.sync_with_blockchain();
+        af.sync_with_tip();
         assert_eq!(af.wallet_balance(), 100_000_000);
     }
 
-    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
     let mut af = AccountFactory::new_no_random(
         WalletConfig::with_db_path(db_path), bio).unwrap();
 
@@ -215,7 +159,7 @@ fn test_base_wallet_functionality_cs_api() {
     let db_path = tmp_db_path();
 
     {
-        let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
         let mut af = AccountFactory::new_no_random(
             WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
@@ -223,7 +167,7 @@ fn test_base_wallet_functionality_cs_api() {
     }
 
     {
-        let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
         let mut af = AccountFactory::new_no_random(
             WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
@@ -237,15 +181,15 @@ fn test_base_wallet_functionality_cs_api() {
         // TODO(evg): remove it?
         // bitcoind_client.get_raw_transaction_serialized(&txid).unwrap().unwrap();
         bitcoind_client.generate(1).unwrap().unwrap();
-        af.sync_with_blockchain();
+        af.sync_with_tip();
 
         // wallet send money to itself, so balance decreased only by fee
         assert_eq!(af.wallet_balance(), 600_000_000 - 10_000);
     }
 
     {
-        let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
-        let mut af = AccountFactory::new_no_random(
+        let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let af = AccountFactory::new_no_random(
             WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
         // balance should not change after restart
         assert_eq!(af.wallet_balance(), 600_000_000 - 10_000);
@@ -260,7 +204,7 @@ fn test_make_tx_call() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
     let mut af = AccountFactory::new_no_random(
         WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
@@ -298,7 +242,7 @@ fn test_send_coins_call() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
     let mut af = AccountFactory::new_no_random(
         WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
@@ -309,7 +253,7 @@ fn test_send_coins_call() {
     // TODO(evg): add get assertions
 
     bitcoind_client.generate(1).unwrap().unwrap();
-    af.sync_with_blockchain();
+    af.sync_with_tip();
 
 
     assert_eq!(af.wallet_balance(), 600_000_000 - 10_000);
@@ -332,7 +276,7 @@ fn test_lock_coins_flag_success() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
     let mut af = AccountFactory::new_no_random(
         WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 
@@ -345,8 +289,7 @@ fn test_lock_coins_flag_success() {
     af.unlock_coins(lock_id);
 
     let (tx, _) = af.send_coins(dest_addr, 200_000_000 - 10_000, true, false, false).unwrap();
-    let tx: &str = &hex::encode(serialize(&tx).unwrap());
-    bitcoind_client.send_raw_transaction(SerializedRawTransaction::from(tx)).unwrap().unwrap();
+    af.publish_tx(&tx);
 }
 
 #[test]
@@ -357,7 +300,7 @@ fn test_lock_coins_flag() {
     bitcoind_client.generate(110).unwrap().unwrap();
 
     let db_path = tmp_db_path();
-    let bio = Box::new(BitcoinCoreIO(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
     let mut af = AccountFactory::new_no_random(
         WalletConfig::with_db_path(db_path.clone()), bio).unwrap();
 

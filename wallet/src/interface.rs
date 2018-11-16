@@ -28,6 +28,7 @@ pub trait Wallet {
         amt: u64,
         submit: bool,
     ) -> Result<Transaction, Box<Error>>;
+    fn publish_tx(&self, tx: &Transaction);
     fn sync_with_tip(&mut self);
     // TODO(evg): add new address method??
 }

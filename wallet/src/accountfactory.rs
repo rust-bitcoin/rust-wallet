@@ -450,6 +450,10 @@ impl Wallet for AccountFactory {
         Ok(tx)
     }
 
+    fn publish_tx(&self, tx: &Transaction) {
+        self.bio.send_raw_transaction(tx);
+    }
+
     /// Sync from last seen(processed) block
     fn sync_with_tip(&mut self) {
         let block_height = self.bio.get_block_count();
@@ -776,12 +780,5 @@ impl AccountFactory {
             let block = self.bio.get_block(&block_hash);
             self.process_block(i, &block);
         }
-    }
-
-    /// Initial sync with blockchain
-    pub fn sync_with_blockchain(&mut self) {
-        let block_height = self.bio.get_block_count();
-
-        self.process_block_range(1, block_height as usize);
     }
 }
