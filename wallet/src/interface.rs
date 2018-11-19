@@ -8,8 +8,8 @@ use accountfactory::LockId;
 use std::error::Error;
 
 pub trait Wallet {
-    fn get_account(&self, address_type: AccountAddressType) -> &Account;
-    fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account;
+    fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>>;
+    fn new_change_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>>;
     fn get_utxo_list(&self) -> Vec<Utxo>;
     fn wallet_balance(&self) -> u64;
     fn unlock_coins(&mut self, lock_id: LockId);
@@ -30,13 +30,7 @@ pub trait Wallet {
     ) -> Result<Transaction, Box<Error>>;
     fn publish_tx(&self, tx: &Transaction);
     fn sync_with_tip(&mut self);
-    // TODO(evg): add new address method??
 }
-
-//pub trait Account {
-//    fn new_address(&mut self) -> Result<String, Box<Error>>;
-//    fn new_change_address(&mut self) -> Result<String, Box<Error>>;
-//}
 
 pub trait BlockChainIO {
     fn get_block_count(&self) -> u32;

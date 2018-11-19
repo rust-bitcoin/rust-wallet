@@ -225,7 +225,7 @@ pub struct AccountFactory {
     network: Network,
 
     // TODO(evg): bio
-    bio: Box<BlockChainIO>,
+    bio: Box<BlockChainIO + Send>,
 
     last_seen_block_height: usize,
     op_to_utxo: HashMap<OutPoint, Utxo>,
@@ -235,20 +235,12 @@ pub struct AccountFactory {
 }
 
 impl Wallet for AccountFactory {
-    fn get_account(&self, address_type: AccountAddressType) -> &Account {
-        match address_type {
-            AccountAddressType::P2PKH  => &self.p2pkh_account,
-            AccountAddressType::P2SHWH => &self.p2shwh_account,
-            AccountAddressType::P2WKH  => &self.p2wkh_account,
-        }
+    fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>> {
+        self.get_account_mut(address_type).new_address()
     }
 
-    fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
-        match address_type {
-            AccountAddressType::P2PKH  => &mut self.p2pkh_account,
-            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
-            AccountAddressType::P2WKH  => &mut self.p2wkh_account,
-        }
+    fn new_change_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>> {
+        self.get_account_mut(address_type).new_change_address()
     }
 
     fn get_utxo_list(&self) -> Vec<Utxo> {
@@ -486,7 +478,7 @@ impl AccountFactory {
 //        })
 //    }
 
-    pub fn new_no_random (wc: WalletConfig, bio: Box<BlockChainIO>) -> Result<AccountFactory, WalletError> {
+    pub fn new_no_random (wc: WalletConfig, bio: Box<BlockChainIO + Send>) -> Result<AccountFactory, WalletError> {
         let (master_key, mnemonic, encrypted, _) =
             KeyFactory::new_master_private_key_no_random (
                 wc.entropy,
@@ -659,6 +651,22 @@ impl AccountFactory {
             network,
             Arc::clone(&db),
         )
+    }
+
+    fn get_account(&self, address_type: AccountAddressType) -> &Account {
+        match address_type {
+            AccountAddressType::P2PKH  => &self.p2pkh_account,
+            AccountAddressType::P2SHWH => &self.p2shwh_account,
+            AccountAddressType::P2WKH  => &self.p2wkh_account,
+        }
+    }
+
+    pub fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
+        match address_type {
+            AccountAddressType::P2PKH  => &mut self.p2pkh_account,
+            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
+            AccountAddressType::P2WKH  => &mut self.p2wkh_account,
+        }
     }
 
     pub fn process_tx(&mut self, tx: &Transaction) {
