@@ -1,0 +1,8 @@
+version: '3.5'
+services:
+  bitcoind:
+    image: lightningnetwork/bitcoind-alpine:0.16.1-r2
+    ports:
+      - "18332:18443"
+      - "18501:18501"
+    command: -regtest -printtoconsole -txindex -rpcallowip=0.0.0.0/0 -rpcuser=user -rpcpassword=password -zmqpubrawblock=tcp://0.0.0.0:18501 -zmqpubrawtx=tcp://0.0.0.0:18501

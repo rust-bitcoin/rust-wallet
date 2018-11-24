@@ -1,0 +1,21 @@
+sudo: required
+
+language: rust
+
+services:
+  - docker
+
+addons:
+  apt:
+    packages:
+      - libzmq3-dev
+      - build-essential
+
+before_install:
+  - docker pull lightningnetwork/bitcoind-alpine:0.16.1-r2
+
+install:
+  - RUST_BACKTRACE=1 cargo build --no-default-features --verbose
+
+script:
+  - RUST_BACKTRACE=1 cargo test -- --test-threads=1
