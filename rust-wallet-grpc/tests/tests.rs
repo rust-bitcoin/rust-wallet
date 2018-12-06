@@ -28,7 +28,7 @@ use std::{
     time::Duration,
 };
 
-use wallet::accountfactory::{WalletConfig, BitcoindConfig};
+use wallet::walletlibrary::{WalletConfig, BitcoindConfig};
 use rust_wallet_grpc::{
     server::{launch_server, DEFAULT_WALLET_RPC_PORT},
     client::WalletClientWrapper,

@@ -24,7 +24,7 @@ use clap::{Arg, App};
 
 use std::str::FromStr;
 
-use wallet::accountfactory::{
+use wallet::walletlibrary::{
     WalletConfig, BitcoindConfig,
     DEFAULT_NETWORK, DEFAULT_ENTROPY, DEFAULT_PASSPHRASE, DEFAULT_SALT, DEFAULT_DB_PATH,
     DEFAULT_BITCOIND_RPC_CONNECT, DEFAULT_BITCOIND_RPC_USER, DEFAULT_BITCOIND_RPC_PASSWORD,

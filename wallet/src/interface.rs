@@ -17,7 +17,7 @@ use bitcoin::{
     Block, Transaction, OutPoint,
 };
 use account::{Account, AccountAddressType, Utxo};
-use accountfactory::LockId;
+use walletlibrary::LockId;
 
 use std::error::Error;
 
@@ -31,7 +31,6 @@ pub trait Wallet {
         &mut self,
         addr_str: String,
         amt: u64,
-        submit: bool,
         lock_coins: bool,
         witness_only: bool,
     ) -> Result<(Transaction, LockId), Box<Error>>;
@@ -40,10 +39,7 @@ pub trait Wallet {
         ops: Vec<OutPoint>,
         addr_str: String,
         amt: u64,
-        submit: bool,
     ) -> Result<Transaction, Box<Error>>;
-    fn publish_tx(&self, tx: &Transaction);
-    fn sync_with_tip(&mut self);
 }
 
 pub trait BlockChainIO {

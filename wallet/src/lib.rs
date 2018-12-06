@@ -28,11 +28,14 @@ extern crate serde;
 extern crate serde_json;
 extern crate log;
 extern crate simple_logger;
+extern crate electrumx_client;
 
 pub mod mnemonic;
 pub mod error;
 pub mod keyfactory;
-pub mod accountfactory;
+pub mod walletlibrary;
+pub mod default;
+pub mod electrumx;
 pub mod account;
 mod db;
 pub mod interface;

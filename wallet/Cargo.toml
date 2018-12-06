@@ -34,6 +34,7 @@ byteorder = "1.2.6"
 serde = "1"
 serde_derive = "1"
 serde_json = "1.0.31"
+electrumx_client = { git = "https://github.com/evgeniy-scherbina/rust-electrumx-client.git" }
 
 [dev-dependencies]
 bitcoin_core_io = { path = "../bitcoin_core_io" }
