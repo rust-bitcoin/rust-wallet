@@ -13,20 +13,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use bitcoin::{
-    network::{
-        serialize::{serialize, deserialize},
-    },
-    blockdata::{
-        block::Block,
-        transaction::OutPoint,
-    },
+    network::serialize::serialize,
+    blockdata::transaction::OutPoint,
     util::hash::Sha256dHash,
 };
 use protobuf::RepeatedField;
 use grpc;
 use tls_api_native_tls;
-use crossbeam;
-use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, SerializedRawTransaction};
+use bitcoin_rpc_client::BitcoinCoreClient;
 use wallet::{
     account::{Utxo, AccountAddressType},
     accountfactory::{AccountFactory, WalletConfig, BitcoindConfig, LockId},
@@ -35,16 +29,16 @@ use wallet::{
 use bitcoin_core_io::BitcoinCoreIO;
 
 use std::{
+    thread,
     error::Error,
     time::Duration,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Sender, Receiver},
+        mpsc::{self, Sender},
     },
 };
 
-use walletrpc_grpc::{Wallet, WalletServer, WalletClient};
+use walletrpc_grpc::{Wallet, WalletServer};
 use walletrpc::{NewAddressRequest, NewAddressResponse, NewChangeAddressRequest, NewChangeAddressResponse,
                 GetUtxoListRequest, GetUtxoListResponse, SyncWithTipRequest, SyncWithTipResponse,
                 MakeTxRequest, MakeTxResponse, SendCoinsRequest, SendCoinsResponse,
@@ -52,6 +46,7 @@ use walletrpc::{NewAddressRequest, NewAddressResponse, NewChangeAddressRequest, 
                 UnlockCoinsRequest, UnlockCoinsResponse, ShutdownRequest, ShutdownResponse};
 
 pub const DEFAULT_WALLET_RPC_PORT: u16 = 5051;
+const SHUTDOWN_TIMEOUT_IN_MS: u64 = 50;
 
 fn grpc_error<T: Send>(resp: Result<T, Box<Error>>) -> grpc::SingleResponse<T> {
     match resp {
@@ -95,12 +90,24 @@ impl Into<RpcAddressType> for AccountAddressType {
     }
 }
 
-struct WalletImpl(Arc<Mutex<AccountFactory>>, Arc<AtomicBool>);
+struct ShutdownSignal;
+
+struct WalletImpl {
+    af: Arc<Mutex<AccountFactory>>,
+    shutdown: Mutex<Sender<ShutdownSignal>>,
+}
 
 impl WalletImpl {
+    fn new(af: Arc<Mutex<AccountFactory>>, shutdown: Mutex<Sender<ShutdownSignal>>) -> Self {
+        Self {
+            af,
+            shutdown,
+        }
+    }
+
     fn new_address_helper(&self, req: &NewAddressRequest) -> Result<NewAddressResponse, Box<Error>> {
         let mut resp = NewAddressResponse::new();
-        let mut ac = self.0.lock().unwrap();
+        let mut ac = self.af.lock().unwrap();
         let account = ac.get_account_mut(req.get_addr_type().into());
         let addr = account.new_address()?;
         resp.set_address(addr);
@@ -109,7 +116,7 @@ impl WalletImpl {
 
     fn new_change_address(&self, req: &NewChangeAddressRequest) -> Result<NewChangeAddressResponse, Box<Error>> {
         let mut resp = NewChangeAddressResponse::new();
-        let mut ac = self.0.lock().unwrap();
+        let mut ac = self.af.lock().unwrap();
         let account = ac.get_account_mut(req.get_addr_type().into());
         let addr = account.new_change_address()?;
         resp.set_address(addr);
@@ -125,7 +132,7 @@ impl WalletImpl {
             })
         }
 
-        let tx = self.0.lock().unwrap().make_tx(ops, req.dest_addr, req.amt, req.submit)?;
+        let tx = self.af.lock().unwrap().make_tx(ops, req.dest_addr, req.amt, req.submit)?;
 
         let mut resp = MakeTxResponse::new();
         resp.set_serialized_raw_tx(serialize(&tx)?);
@@ -133,7 +140,7 @@ impl WalletImpl {
     }
 
     fn send_coins_helper(&self, req: SendCoinsRequest) -> Result<SendCoinsResponse, Box<Error>> {
-        let (tx, lock_id) = self.0.lock().unwrap().send_coins(req.dest_addr, req.amt, req.lock_coins, req.witness_only, req.submit)?;
+        let (tx, lock_id) = self.af.lock().unwrap().send_coins(req.dest_addr, req.amt, req.lock_coins, req.witness_only, req.submit)?;
 
         let mut resp = SendCoinsResponse::new();
         resp.set_serialized_raw_tx(serialize(&tx).unwrap());
@@ -158,7 +165,7 @@ impl Wallet for WalletImpl {
     fn get_utxo_list(&self, _m: grpc::RequestOptions, _req: GetUtxoListRequest) -> grpc::SingleResponse<GetUtxoListResponse> {
         info!("utxo list was requested");
         let mut resp = GetUtxoListResponse::new();
-        let utxo_list = self.0.lock().unwrap().get_utxo_list();
+        let utxo_list = self.af.lock().unwrap().get_utxo_list();
         resp.set_utxos(RepeatedField::from_vec(utxo_list.into_iter().map(|utxo| utxo.into()).collect()));
         grpc::SingleResponse::completed(resp)
     }
@@ -166,7 +173,7 @@ impl Wallet for WalletImpl {
     fn wallet_balance(&self, _m: ::grpc::RequestOptions, _req: WalletBalanceRequest) -> grpc::SingleResponse<WalletBalanceResponse> {
         info!("wallet balance was requested");
         let mut resp = WalletBalanceResponse::new();
-        let balance = self.0.lock().unwrap().wallet_balance();
+        let balance = self.af.lock().unwrap().wallet_balance();
         resp.set_total_balance(balance);
         grpc::SingleResponse::completed(resp)
     }
@@ -175,7 +182,7 @@ impl Wallet for WalletImpl {
         info!("manual(not ZMQ) sync with tip was requested");
 
         let resp = SyncWithTipResponse::new();
-        self.0.lock().unwrap().sync_with_tip();
+        self.af.lock().unwrap().sync_with_tip();
         grpc::SingleResponse::completed(resp)
     }
 
@@ -191,7 +198,7 @@ impl Wallet for WalletImpl {
 
     fn unlock_coins(&self, _m: grpc::RequestOptions, req: UnlockCoinsRequest) -> grpc::SingleResponse<UnlockCoinsResponse> {
         info!("unlock_coins was requested");
-        self.0.lock().unwrap().unlock_coins(LockId::from(req.lock_id));
+        self.af.lock().unwrap().unlock_coins(LockId::from(req.lock_id));
 
         let resp = UnlockCoinsResponse::new();
         grpc::SingleResponse::completed(resp)
@@ -200,7 +207,7 @@ impl Wallet for WalletImpl {
     fn shutdown(&self, _m: grpc::RequestOptions, _req: ShutdownRequest) -> grpc::SingleResponse<ShutdownResponse> {
         info!("shutdown was requested");
 
-        self.1.store(true, Ordering::Relaxed);
+        self.shutdown.lock().unwrap().send(ShutdownSignal).unwrap();
 
         let resp = ShutdownResponse::new();
         grpc::SingleResponse::completed(resp)
@@ -209,35 +216,25 @@ impl Wallet for WalletImpl {
 
 pub fn launch_server(wc: WalletConfig, cfg: BitcoindConfig, wallet_rpc_port: u16) {
     let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
-    let ac = AccountFactory::new_no_random(wc, bio).unwrap();
+    let af = AccountFactory::new_no_random(wc, bio).unwrap();
+    let af = Arc::new(Mutex::new(af));
 
-    let rw_lock_ac = Arc::new(Mutex::new(ac));
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let (shutdown_sender, shutdown_receiver) = mpsc::channel();
 
     let mut server: grpc::ServerBuilder<tls_api_native_tls::TlsAcceptor> = grpc::ServerBuilder::new();
     server.http.set_port(wallet_rpc_port);
-    let wallet_impl = WalletImpl(rw_lock_ac, Arc::clone(&shutdown));
+    let wallet_impl = WalletImpl::new(af, Mutex::new(shutdown_sender));
     server.add_service(WalletServer::new_service_def(wallet_impl));
     server.http.set_cpu_pool_threads(1);
     server.http.set_addr(format!("127.0.0.1:{}", DEFAULT_WALLET_RPC_PORT)).unwrap();
     let _server = server.build().expect("server");
 
-    use std::thread;
-
     info!("wallet server started on port {} {}",
           wallet_rpc_port, "without tls" );
 
-    crossbeam::scope(|scope| {
-        scope.spawn(|| {
-            let mut request_nbr = 0;
-            loop {
-                if shutdown.load(Ordering::Relaxed) {
-                    info!("Gracefully shutdown...");
-                    break;
-                }
+    // wait for shutdown signal from grpc client
+    shutdown_receiver.recv().unwrap();
 
-                thread::sleep(Duration::from_millis(50));
-            }
-        });
-    });
+    // give some time to server gracefully shutdown
+    thread::sleep(Duration::from_millis(SHUTDOWN_TIMEOUT_IN_MS));
 }

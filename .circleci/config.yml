@@ -25,6 +25,7 @@ jobs:
           sudo ln -sf /usr/lib/gcc/x86_64-linux-gnu/6/include/stddef.h /usr/include/stddef.h
           git clone https://github.com/facebook/rocksdb
           cd rocksdb
+          git checkout v5.17.2
           make shared_lib
           sudo cp librocksdb.so* $ROCKSDB_LIB_DIR
 
