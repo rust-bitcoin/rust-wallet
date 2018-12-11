@@ -30,8 +30,8 @@ use std::str::FromStr;
 use bitcoin_core_io::BitcoinCoreIO;
 use wallet::{
     walletlibrary::{
-        WalletConfig, BitcoindConfig,
-        DEFAULT_NETWORK, DEFAULT_ENTROPY, DEFAULT_PASSPHRASE, DEFAULT_SALT, DEFAULT_DB_PATH,
+        WalletConfig, BitcoindConfig, WalletLibraryMode, KeyGenConfig,
+        DEFAULT_NETWORK, DEFAULT_PASSPHRASE, DEFAULT_SALT, DEFAULT_DB_PATH,
         DEFAULT_BITCOIND_RPC_CONNECT, DEFAULT_BITCOIND_RPC_USER, DEFAULT_BITCOIND_RPC_PASSWORD,
         DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT, DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT,
     },
@@ -99,7 +99,6 @@ fn main() {
 
     let wc = WalletConfig::new(
         DEFAULT_NETWORK,
-        DEFAULT_ENTROPY,
         DEFAULT_PASSPHRASE.to_string(),
         DEFAULT_SALT.to_string(),
         matches.value_of("db_path").unwrap().to_string(),
@@ -113,16 +112,19 @@ fn main() {
         matches.value_of("zmqpubrawtx").unwrap().to_string(),
     );
 
-    let wallet = if matches.is_present("electrumx") {
-        let mut electrumx_wallet: Box<Wallet + Send> = Box::new(ElectrumxWallet::new_no_random(
-            wc).unwrap());
-        electrumx_wallet
+    // TODO(evg): rewrite it; add --create param; use WalletLibraryMode::Decrypt mode as well
+    let wallet: Box<dyn Wallet + Send> = if matches.is_present("electrumx") {
+        let (electrumx_wallet, mnemonic) = ElectrumxWallet::new(
+            wc, WalletLibraryMode::Create(KeyGenConfig::default())).unwrap();
+        println!("{}", mnemonic.to_string());
+        Box::new(electrumx_wallet)
     } else {
         let bio = Box::new(BitcoinCoreIO::new(
             BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
-        let mut default_wallet: Box<Wallet + Send> = Box::new(WalletWithTrustedFullNode::new_no_random(
-            wc, bio).unwrap());
-        default_wallet
+        let (default_wallet, mnemonic) = WalletWithTrustedFullNode::new(
+            wc, bio, WalletLibraryMode::Create(KeyGenConfig::default())).unwrap();
+        println!("{}", mnemonic.to_string());
+        Box::new(default_wallet)
     };
 
     let wallet_rpc_port: u16 = matches.value_of("wallet_rpc_port").unwrap().parse().unwrap();

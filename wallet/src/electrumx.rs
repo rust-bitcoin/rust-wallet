@@ -27,9 +27,10 @@ use electrumx_client::{
     electrumx_client::ElectrumxClient,
     interface::Electrumx,
 };
-use walletlibrary::{WalletLibrary, WalletConfig, LockId};
+use walletlibrary::{WalletLibrary, WalletConfig, LockId, WalletLibraryMode};
 use interface::{WalletLibraryInterface, Wallet};
 use error::WalletError;
+use mnemonic::Mnemonic;
 
 pub struct ElectrumxWallet {
     pub wallet_lib: Box<WalletLibraryInterface + Send>,
@@ -112,13 +113,10 @@ impl Wallet for ElectrumxWallet {
 }
 
 impl ElectrumxWallet {
-    pub fn new_no_random (wc: WalletConfig) -> Result<ElectrumxWallet, WalletError> {
-        let wallet_lib = Box::new(WalletLibrary::new_no_random(wc).unwrap());
+    pub fn new(wc: WalletConfig, mode: WalletLibraryMode) -> Result<(ElectrumxWallet, Mnemonic), WalletError> {
+        let (wallet_lib, mnemonic) = WalletLibrary::new(wc, mode).unwrap();
         let electrumx_client = ElectrumxClient::new("127.0.0.1:60401".to_string()).unwrap();
 
-        Ok(ElectrumxWallet {
-            wallet_lib,
-            electrumx_client,
-        })
+        Ok((ElectrumxWallet { wallet_lib: Box::new(wallet_lib), electrumx_client }, mnemonic))
     }
 }

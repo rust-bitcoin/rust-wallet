@@ -16,9 +16,10 @@ use bitcoin::{Block, Transaction, OutPoint};
 
 use std::error::Error;
 
-use walletlibrary::{WalletLibrary, WalletConfig, LockId};
+use walletlibrary::{WalletLibrary, WalletConfig, LockId, WalletLibraryMode};
 use interface::{BlockChainIO, WalletLibraryInterface, Wallet};
 use error::WalletError;
+use mnemonic::Mnemonic;
 
 // a factory for TREZOR (BIP44) compatible accounts
 pub struct WalletWithTrustedFullNode {
@@ -88,36 +89,11 @@ impl WalletWithTrustedFullNode {
 //        })
 //    }
 
-    pub fn new_no_random (wc: WalletConfig, bio: Box<BlockChainIO + Send>) -> Result<WalletWithTrustedFullNode, WalletError> {
-        let wallet_lib = Box::new(WalletLibrary::new_no_random(wc).unwrap());
+    pub fn new(wc: WalletConfig, bio: Box<BlockChainIO + Send>, mode: WalletLibraryMode) -> Result<(WalletWithTrustedFullNode, Mnemonic), WalletError> {
+        let (wallet_lib, mnemonic) = WalletLibrary::new(wc, mode).unwrap();
 
-        Ok(WalletWithTrustedFullNode {
-            wallet_lib,
-            bio,
-        })
+        Ok((WalletWithTrustedFullNode { wallet_lib: Box::new(wallet_lib), bio }, mnemonic))
     }
-
-    /// decrypt stored master key
-//    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
-//        let mnemonic = Mnemonic::new (encrypted, passphrase)?;
-//        let key_factory = KeyFactory::new();
-//        let master_key = key_factory.master_private_key(network, &Seed::new(&mnemonic, salt))?;
-//        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
-//        let db = DB::open_default("rocks.db").unwrap();
-//        Ok(AccountFactory{
-//            key_factory: Arc::new(key_factory),
-//            master_key,
-//            mnemonic,
-//            encrypted: encrypted.to_vec(),
-//            account_list: Vec::new(),
-//            network,
-//            cfg,
-//            client,
-//            last_seen_block_height: 1,
-//            op_to_utxo: HashMap::new(),
-//            db: Arc::new(RwLock::new(db)),
-//        })
-//    }
 
     fn process_block(&mut self, block_height: usize, block: &Block) {
         for tx in &block.txdata {

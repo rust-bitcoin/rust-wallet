@@ -32,10 +32,12 @@ pub struct KeyFactory;
 
 impl KeyFactory {
     /// create a new random master private key
-    pub fn new_master_private_key (entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>), WalletError> {
+    pub fn new_master_private_key(entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str, debug: bool) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>), WalletError> {
         let mut encrypted = vec!(0u8; entropy as usize);
         if let Ok(mut rng) = OsRng::new() {
-            rng.fill_bytes(encrypted.as_mut_slice());
+            if !debug {
+                rng.fill_bytes(encrypted.as_mut_slice());
+            }
             let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
             let seed = Seed::new(&mnemonic, salt);
             let key = KeyFactory::master_private_key(network, &seed)?;
@@ -44,15 +46,18 @@ impl KeyFactory {
         Err(WalletError::Generic("can not obtain random source"))
     }
 
-    /// create a new master private key for debug/test purposes
-    pub fn new_master_private_key_no_random(entropy: MasterKeyEntropy, network: Network,
-        passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>, Vec<u8>), WalletError> {
-
-        let encrypted = vec!(0u8; entropy as usize);
-        let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
+    /// decrypt stored master key
+    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic), WalletError> {
+        let mnemonic = Mnemonic::new (encrypted, passphrase)?;
         let seed = Seed::new(&mnemonic, salt);
         let key = KeyFactory::master_private_key(network, &seed)?;
-        return Ok((key, mnemonic, encrypted, seed.data()))
+        Ok((key, mnemonic))
+    }
+
+    pub fn recover_from_mnemonic(mnemonic: &Mnemonic, network: Network, salt: &str) -> Result<ExtendedPrivKey, WalletError> {
+        let seed = Seed::new(&mnemonic, salt);
+        let key = KeyFactory::master_private_key(network, &seed)?;
+        Ok(key)
     }
 
     /// create a master private key from seed

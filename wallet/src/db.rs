@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use bitcoin::OutPoint;
-use secp256k1::{Secp256k1, SecretKey, PublicKey};
+use secp256k1::{Secp256k1, PublicKey};
 use rocksdb::{DB as RocksDB, ColumnFamilyDescriptor, Options, IteratorMode};
 use byteorder::{ByteOrder, BigEndian};
 use serde_json;
@@ -23,11 +23,10 @@ use std::collections::HashMap;
 use account::{Utxo, SecretKeyHelper, AccountAddressType};
 use walletlibrary::{LockId, LockGroup};
 
+static BIP39_RANDOMNESS: &'static [u8] = b"bip39_randomness";
 static LAST_SEEN_BLOCK_HEIGHT: &'static [u8] = b"lsbh";
 static UTXO_MAP_CF: &'static str = "utxo_map";
-static EXTERNAL_SECRET_KEY_CF: &'static str = "eskcf";
 static EXTERNAL_PUBLIC_KEY_CF: &'static str = "epkcf";
-static INTERNAL_SECRET_KEY_CF: &'static str = "iskcf";
 static INTERNAL_PUBLIC_KEY_CF: &'static str = "ipkcf";
 static P2PKH_ADDRESS_CF:  &'static str = "p2pkh";
 static P2SHWH_ADDRESS_CF: &'static str = "p2shwh";
@@ -39,16 +38,8 @@ pub struct DB(RocksDB);
 impl DB {
     pub fn new(db_path: String) -> Self {
         let utxo_map_cf= ColumnFamilyDescriptor::new(UTXO_MAP_CF, Options::default());
-        let secret_key_cf = ColumnFamilyDescriptor::new(
-            EXTERNAL_SECRET_KEY_CF,
-            Options::default(),
-        );
         let public_key_cf = ColumnFamilyDescriptor::new(
             EXTERNAL_PUBLIC_KEY_CF,
-            Options::default(),
-        );
-        let internal_secret_key_cf = ColumnFamilyDescriptor::new(
-            INTERNAL_SECRET_KEY_CF,
             Options::default(),
         );
         let internal_public_key_cf = ColumnFamilyDescriptor::new(
@@ -77,9 +68,7 @@ impl DB {
             &db_path,
             vec![
                 utxo_map_cf,
-                secret_key_cf,
                 public_key_cf,
-                internal_secret_key_cf,
                 internal_public_key_cf,
                 lock_group_map_cf,
                 p2pkh_address_cf,
@@ -88,6 +77,15 @@ impl DB {
             ],
         ).unwrap();
         DB(db)
+    }
+
+    pub fn get_bip39_randomness(&self) -> Vec<u8> {
+        let randomness = self.0.get(BIP39_RANDOMNESS).unwrap().unwrap();
+        (*randomness).to_vec()
+    }
+
+    pub fn put_bip39_randomness(&self, randomness: &[u8]) {
+        self.0.put(BIP39_RANDOMNESS, randomness).unwrap();
     }
 
     pub fn get_last_seen_block_height(&self) -> usize {
@@ -129,20 +127,6 @@ impl DB {
         self.0.delete_cf(cf, key.as_slice()).unwrap();
     }
 
-    pub fn get_external_secret_key_list(&self) -> Vec<(SecretKeyHelper, SecretKey)> {
-        let cf = self.0.cf_handle(EXTERNAL_SECRET_KEY_CF).unwrap();
-        let db_iterator = self.0.iterator_cf(cf, IteratorMode::Start).unwrap();
-
-        let mut vec = Vec::new();
-        for (key, val) in db_iterator {
-            let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
-            let sk: [u8; 32] = serde_json::from_slice(&val).unwrap();
-            let sk = SecretKey::from_slice(&Secp256k1::new(), &sk).unwrap();
-            vec.push((key_helper, sk));
-        }
-        vec
-    }
-
     pub fn get_external_public_key_list(&self) -> Vec<(SecretKeyHelper, PublicKey)> {
         let cf = self.0.cf_handle(EXTERNAL_PUBLIC_KEY_CF).unwrap();
         let db_iterator = self.0.iterator_cf(cf, IteratorMode::Start).unwrap();
@@ -153,20 +137,6 @@ impl DB {
             let pk: Vec<u8> = serde_json::from_slice(&val).unwrap();
             let pk = PublicKey::from_slice(&Secp256k1::new(), pk.as_slice()).unwrap();
             vec.push((key_helper, pk));
-        }
-        vec
-    }
-
-    pub fn get_internal_secret_key_list(&self) -> Vec<(SecretKeyHelper, SecretKey)> {
-        let cf = self.0.cf_handle(INTERNAL_SECRET_KEY_CF).unwrap();
-        let db_iterator = self.0.iterator_cf(cf, IteratorMode::Start).unwrap();
-
-        let mut vec = Vec::new();
-        for (key, val) in db_iterator {
-            let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
-            let sk: [u8; 32] = serde_json::from_slice(&val).unwrap();
-            let sk = SecretKey::from_slice(&Secp256k1::new(), &sk).unwrap();
-            vec.push((key_helper, sk));
         }
         vec
     }
@@ -208,24 +178,10 @@ impl DB {
         vec
     }
 
-    pub fn put_external_secret_key(&mut self, key_helper: &SecretKeyHelper, sk: &SecretKey) {
-        let key = serde_json::to_vec(key_helper).unwrap();
-        let val = serde_json::to_vec(sk).unwrap();
-        let cf = self.0.cf_handle(EXTERNAL_SECRET_KEY_CF).unwrap();
-        self.0.put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
-    }
-
     pub fn put_external_public_key(&mut self, key_helper: &SecretKeyHelper, pk: &PublicKey) {
         let key = serde_json::to_vec(key_helper).unwrap();
         let val = serde_json::to_vec(pk).unwrap();
         let cf = self.0.cf_handle(EXTERNAL_PUBLIC_KEY_CF).unwrap();
-        self.0.put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
-    }
-
-    pub fn put_internal_secret_key(&self, key_helper: &SecretKeyHelper, sk: &SecretKey) {
-        let key = serde_json::to_vec(key_helper).unwrap();
-        let val = serde_json::to_vec(sk).unwrap();
-        let cf = self.0.cf_handle(INTERNAL_SECRET_KEY_CF).unwrap();
         self.0.put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
     }
 

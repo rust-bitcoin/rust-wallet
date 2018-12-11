@@ -96,6 +96,15 @@ impl From<AddressChain> for usize {
     }
 }
 
+impl Into<u32> for AddressChain {
+    fn into(self) -> u32 {
+        match self {
+            AddressChain::External => 0,
+            AddressChain::Internal => 1,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KeyPath {
     addr_chain: AddressChain,
@@ -142,8 +151,6 @@ pub struct Account {
 
     external_index: u32,
     internal_index: u32,
-    pub external_sk_list: Vec<SecretKey>,
-    pub internal_sk_list: Vec<SecretKey>,
     pub external_pk_list: Vec<PublicKey>,
     pub internal_pk_list: Vec<PublicKey>,
 
@@ -179,8 +186,6 @@ impl Account {
 
             external_index: 0,
             internal_index: 0,
-            external_sk_list: Vec::new(),
-            internal_sk_list: Vec::new(),
             external_pk_list: Vec::new(),
             internal_pk_list: Vec::new(),
 
@@ -192,10 +197,12 @@ impl Account {
     }
 
     pub fn get_sk(&self, key_path: &KeyPath) -> SecretKey {
-        match key_path.addr_chain {
-            AddressChain::External => self.external_sk_list[key_path.addr_index as usize],
-            AddressChain::Internal => self.internal_sk_list[key_path.addr_index as usize],
-        }
+        let path: &[ChildNumber] = &[
+            ChildNumber::Normal{index: key_path.addr_chain.clone().into()}, // TODO(evg): use addr chain enum instead?
+            ChildNumber::Normal{index: key_path.addr_index},
+        ];
+        let extended_priv_key = self.account_key.derive_priv(&Secp256k1::new(),path).unwrap();
+        extended_priv_key.secret_key
     }
 
     pub fn grab_utxo(&mut self, utxo: Utxo) {
@@ -213,16 +220,11 @@ impl Account {
             ChildNumber::Normal{index: self.external_index},
         ];
         let extended_priv_key = self.account_key.derive_priv(&Secp256k1::new(),path)?;
-        self.external_sk_list.push(extended_priv_key.secret_key);
 
         let extended_pub_key = ExtendedPubKey::from_private(&Secp256k1::new(), &extended_priv_key);
         self.external_pk_list.push(extended_pub_key.public_key);
 
         // DB BEGIN
-        let key = SecretKeyHelper::new(
-            self.address_type.clone(), AddressChain::External, self.external_index);
-        self.db.write().unwrap().put_external_secret_key(&key, &extended_priv_key.secret_key);
-
         let key = SecretKeyHelper::new(
             self.address_type.clone(), AddressChain::External, self.external_index);
         self.db.write().unwrap().put_external_public_key(&key, &extended_pub_key.public_key);
@@ -239,16 +241,11 @@ impl Account {
         ];
         self.internal_index += 1;
         let extended_priv_key = self.account_key.derive_priv(&Secp256k1::new(), path)?;
-        self.internal_sk_list.push(extended_priv_key.secret_key);
 
         let extended_pub_key = ExtendedPubKey::from_private(&Secp256k1::new(), &extended_priv_key);
         self.internal_pk_list.push(extended_pub_key.public_key);
 
         // DB BEGIN
-        let key = SecretKeyHelper::new(
-            self.address_type.clone(), AddressChain::Internal, self.internal_index);
-        self.db.write().unwrap().put_internal_secret_key(&key, &extended_priv_key.secret_key);
-
         let key = SecretKeyHelper::new(
             self.address_type.clone(), AddressChain::Internal, self.internal_index);
         self.db.write().unwrap().put_internal_public_key(&key, &extended_pub_key.public_key);
@@ -329,10 +326,10 @@ mod test {
     };
     use hex;
 
-    use walletlibrary::WalletConfigBuilder;
+    use walletlibrary::{WalletConfigBuilder, WalletLibraryMode, KeyGenConfig};
     use default::WalletWithTrustedFullNode;
     use account::AccountAddressType;
-    use interface::{BlockChainIO, WalletLibraryInterface};
+    use interface::BlockChainIO;
 
     struct FakeBlockChainIO;
 
@@ -371,7 +368,7 @@ mod test {
             .db_path("/tmp/test_p2pkh_public_key_generation".to_string())
             .network(Network::Testnet)
             .finalize();
-        let mut af = WalletWithTrustedFullNode::new_no_random(wc, Box::new(FakeBlockChainIO)).unwrap();
+        let (mut af, _) = WalletWithTrustedFullNode::new(wc, Box::new(FakeBlockChainIO), WalletLibraryMode::Create(KeyGenConfig::debug())).unwrap();
         let account = af.wallet_lib.get_account_mut(AccountAddressType::P2PKH);
 
         for expected_pk in get_external_pk_vec() {
@@ -404,10 +401,11 @@ mod test {
         ];
 
         let wc = WalletConfigBuilder::new()
-            .db_path("/tmp/test_p2pkh_public_key_generation".to_string())
+            .db_path("/tmp/test_p2wkh_public_key_generation".to_string())
             .network(Network::Testnet)
             .finalize();
-        let mut af = WalletWithTrustedFullNode::new_no_random(wc, Box::new(FakeBlockChainIO)).unwrap();
+        let (mut af, _) = WalletWithTrustedFullNode::new(
+            wc, Box::new(FakeBlockChainIO), WalletLibraryMode::Create(KeyGenConfig::debug())).unwrap();
         let account = af.wallet_lib.get_account_mut(AccountAddressType::P2WKH);
 
         for expected_pk in external_pk_vec {

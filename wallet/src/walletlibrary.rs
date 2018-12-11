@@ -27,13 +27,10 @@ use bitcoin::{
 
     blockdata::transaction::{OutPoint, Transaction, TxIn, TxOut},
     blockdata::script::{Script, Builder},
-    blockdata::block::Block,
 
     network::constants::Network,
-    network::serialize::deserialize,
 };
 use secp256k1::{Secp256k1, PublicKey, Message};
-use hex;
 
 use std::{
     error::Error,
@@ -42,16 +39,12 @@ use std::{
     str::FromStr,
 };
 
-use electrumx_client::{
-    electrumx_client::ElectrumxClient,
-    interface::Electrumx,
-};
 use error::WalletError;
 use mnemonic::Mnemonic;
 use keyfactory::{KeyFactory, MasterKeyEntropy};
 use account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain};
 use db::DB;
-use interface::{WalletLibraryInterface, BlockChainIO};
+use interface::WalletLibraryInterface;
 
 pub static DEFAULT_BITCOIND_RPC_CONNECT: &'static str = "http://127.0.0.1:18332";
 pub static DEFAULT_BITCOIND_RPC_USER: &'static str = "user";
@@ -124,19 +117,40 @@ impl WalletConfigBuilder {
     }
 }
 
+pub struct KeyGenConfig {
+    entropy: MasterKeyEntropy,
+    // TODO(evg): use enum instead?
+    debug: bool,
+}
+
+impl KeyGenConfig {
+    pub fn debug() -> Self {
+        let mut key_gen_cfg = Self::default();
+        key_gen_cfg.debug = true;
+        key_gen_cfg
+    }
+}
+
+impl Default for KeyGenConfig {
+    fn default() -> Self {
+        Self {
+            entropy: DEFAULT_ENTROPY,
+            debug: false,
+        }
+    }
+}
+
 pub struct WalletConfig {
     network: Network,
-    entropy: MasterKeyEntropy,
     passphrase: String,
     salt: String,
     db_path: String
 }
 
 impl WalletConfig {
-    pub fn new(network: Network, entropy: MasterKeyEntropy, passphrase: String, salt: String, db_path: String) -> Self {
+    pub fn new(network: Network, passphrase: String, salt: String, db_path: String) -> Self {
         Self {
             network,
-            entropy,
             passphrase,
             salt,
             db_path,
@@ -154,7 +168,6 @@ impl Default for WalletConfig {
     fn default() -> Self {
         WalletConfig::new(
             DEFAULT_NETWORK,
-            DEFAULT_ENTROPY,
             DEFAULT_PASSPHRASE.to_string(),
             DEFAULT_SALT.to_string(),
             DEFAULT_DB_PATH.to_string(),
@@ -220,8 +233,6 @@ impl LockGroupMap {
 
 pub struct WalletLibrary {
     master_key: ExtendedPrivKey,
-    mnemonic: Mnemonic,
-    encrypted: Vec<u8>,
     p2pkh_account: Account,
     p2shwh_account: Account,
     p2wkh_account: Account,
@@ -365,7 +376,6 @@ impl WalletLibraryInterface for WalletLibrary {
             let ctx = Secp256k1::new();
             let sk = account.get_sk(&utxo.key_path);
             let pk = PublicKey::from_secret_key(&ctx, &sk);
-
             // TODO(evg): do not hardcode bitcoin's network param
             match utxo.addr_type {
                 AccountAddressType::P2PKH => {
@@ -575,19 +585,50 @@ impl WalletLibraryInterface for WalletLibrary {
     }
 }
 
-impl WalletLibrary {
-    pub fn new_no_random (wc: WalletConfig) -> Result<WalletLibrary, WalletError> {
-        let (master_key, mnemonic, encrypted, _) =
-            KeyFactory::new_master_private_key_no_random (
-                wc.entropy,
-                wc.network,
-                &wc.passphrase,
-                &wc.salt,
-            )?;
+pub enum WalletLibraryMode {
+    Create(KeyGenConfig),
+    Decrypt,
+    RecoverFromMnemonic(Mnemonic),
+}
 
+impl WalletLibrary {
+    pub fn new(wc: WalletConfig, mode: WalletLibraryMode) -> Result<(WalletLibrary, Mnemonic), WalletError> {
         let db = DB::new(wc.db_path);
         let last_seen_block_height = db.get_last_seen_block_height();
         let op_to_utxo = db.get_utxo_map();
+        let (master_key, mnemonic) = match mode {
+            WalletLibraryMode::Create(key_gen_cfg) => {
+                let (master_key, mnemonic, encrypted) = KeyFactory::new_master_private_key(
+                        key_gen_cfg.entropy,
+                        wc.network,
+                        &wc.passphrase,
+                        &wc.salt,
+                        key_gen_cfg.debug,
+                    )?;
+                db.put_bip39_randomness(&encrypted);
+                (master_key, mnemonic)
+            },
+            WalletLibraryMode::Decrypt => {
+                let randomness = db.get_bip39_randomness();
+                let (master_key, mnemonic) = KeyFactory::decrypt(
+                    &randomness,
+                        wc.network,
+                        &wc.passphrase,
+                        &wc.salt,
+                    )?;
+                (master_key, mnemonic)
+            },
+            WalletLibraryMode::RecoverFromMnemonic(mnemonic) => {
+                let encrypted = mnemonic.restore(&wc.passphrase)?;
+                db.put_bip39_randomness(&encrypted);
+                let master_key = KeyFactory::recover_from_mnemonic(
+                    &mnemonic,
+                    wc.network,
+                    &wc.salt
+                )?;
+                (master_key, mnemonic)
+            }
+        };
         let db = Arc::new(RwLock::new(db));
 
         let p2pkh_account = WalletLibrary::new_account(
@@ -616,8 +657,6 @@ impl WalletLibrary {
 
         let mut wallet_lib = WalletLibrary {
             master_key,
-            mnemonic,
-            encrypted,
             p2pkh_account,
             p2shwh_account,
             p2wkh_account,
@@ -638,19 +677,9 @@ impl WalletLibrary {
             wallet_lib.get_account_mut(val.addr_type.clone()).utxo_list.insert(val.out_point, val.clone());
         }
 
-        let external_secret_key_list = wallet_lib.db.read().unwrap().get_external_secret_key_list();
-        for (key_helper, sk) in external_secret_key_list {
-            wallet_lib.get_account_mut(key_helper.addr_type.clone()).external_sk_list.push(sk);
-        }
-
         let external_public_key_list = wallet_lib.db.read().unwrap().get_external_public_key_list();
         for (key_helper, pk) in external_public_key_list {
             wallet_lib.get_account_mut(key_helper.addr_type.clone()).external_pk_list.push(pk);
-        }
-
-        let internal_secret_key_list = wallet_lib.db.read().unwrap().get_internal_secret_key_list();
-        for (key_helper, sk) in internal_secret_key_list {
-            wallet_lib.get_account_mut(key_helper.addr_type.clone()).internal_sk_list.push(sk);
         }
 
         let internal_public_key_list = wallet_lib.db.read().unwrap().get_internal_public_key_list();
@@ -670,7 +699,7 @@ impl WalletLibrary {
         for addr in p2wkh_addr_list {
             wallet_lib.get_account_mut(AccountAddressType::P2WKH).btc_address_list.push(addr);
         }
-        Ok(wallet_lib)
+        Ok((wallet_lib, mnemonic))
     }
 
     /// get a copy of the master private key
@@ -683,13 +712,13 @@ impl WalletLibrary {
         KeyFactory::extended_public_from_private(&self.master_key)
     }
 
-    pub fn mnemonic (&self) -> String {
-        self.mnemonic.to_string()
-    }
-
-    pub fn encrypted (&self) -> Vec<u8> {
-        self.encrypted.clone()
-    }
+//    pub fn mnemonic (&self) -> String {
+//        self.mnemonic.to_string()
+//    }
+//
+//    pub fn encrypted (&self) -> Vec<u8> {
+//        self.encrypted.clone()
+//    }
 
     /// get an account
     pub fn extract_account_key(

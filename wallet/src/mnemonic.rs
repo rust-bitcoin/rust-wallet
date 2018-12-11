@@ -34,40 +34,66 @@ impl ToString for Mnemonic {
 
 impl Mnemonic {
     /// create a mnemonic for encrypted data
-    /// decryption algorithm: AES256(Sha256(passphrase), ECB, NoPadding
-    pub fn new (encrypted: &[u8], passphrase: &str) -> Result<Mnemonic, WalletError> {
+    /// decryption algorithm: AES256(Sha256(passphrase), ECB, NoPadding)
+    pub fn new(encrypted: &[u8], passphrase: &str) -> Result<Self, WalletError> {
         let mut key = [0u8; 32];
-        let mut decrypted = vec!(0u8; encrypted.len());
+        let mut decrypted = vec![0u8; encrypted.len()];
         let mut sha2 = Sha256::new();
         sha2.input(passphrase.as_bytes());
         sha2.result(&mut key);
-        let mut decryptor = aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::NoPadding{});
-        decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
-                          &mut buffer::RefWriteBuffer::new(decrypted.as_mut_slice()), true)?;
+        let mut decryptor =
+            aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::NoPadding {});
+        decryptor.decrypt(
+            &mut buffer::RefReadBuffer::new(encrypted),
+            &mut buffer::RefWriteBuffer::new(decrypted.as_mut_slice()),
+            true,
+        )?;
         Mnemonic::mnemonic(decrypted.as_slice())
     }
 
-    pub fn from (s : &str) -> Result<Mnemonic, WalletError> {
-        let words : Vec<_> = s.split(' ').collect();
-        if words.len () < 6 || words.len() % 6 != 0 {
-            return Err(WalletError::Generic("Mnemonic must have a word count divisible with 6"));
+    pub fn from(s: &str) -> Result<Self, WalletError> {
+        let words: Vec<_> = s.split(' ').collect();
+        if words.len() < 3 || words.len() % 3 != 0 {
+            return Err(WalletError::Generic(
+                "Mnemonic must have a word count divisible with 3",
+            ));
         }
         let mut mnemonic = Vec::new();
         for word in &words {
             if let Ok(idx) = WORDS.binary_search(word) {
                 mnemonic.push(WORDS[idx]);
-            }
-            else {
-                return Err(WalletError::Generic("Mneminic contains an unknown word"));
+            } else {
+                return Err(WalletError::Generic("Mnemonic contains an unknown word"));
             }
         }
         Ok(Mnemonic(mnemonic))
     }
 
+    pub fn restore(&self, new_passphrase: &str) -> Result<Vec<u8>, WalletError> {
+        let decrypted = self.data()?;
+
+        let mut key = [0u8; 32];
+        let mut sha2 = Sha256::new();
+        sha2.input(new_passphrase.as_bytes());
+        sha2.result(&mut key);
+
+        let mut encrypted = vec![0u8; decrypted.len()];
+        let mut encryptor =
+            aes::ecb_encryptor(aes::KeySize::KeySize256, &key, blockmodes::NoPadding {});
+        encryptor.encrypt(
+            &mut buffer::RefReadBuffer::new(decrypted.as_slice()),
+            &mut buffer::RefWriteBuffer::new(encrypted.as_mut_slice()),
+            true,
+        )?;
+        Ok(encrypted)
+    }
+
     // create a mnemonic for some data
-    fn mnemonic (data: &[u8]) -> Result<Mnemonic, WalletError> {
+    fn mnemonic(data: &[u8]) -> Result<Self, WalletError> {
         if data.len() % 4 != 0 {
-            return Err(WalletError::Generic("Data for mnemonic should have a length divisible by 4"));
+            return Err(WalletError::Generic(
+                "Data for mnemonic should have a length divisible by 4",
+            ));
         }
         let mut check = [0u8; 32];
 
@@ -75,27 +101,87 @@ impl Mnemonic {
         sha2.input(data);
         sha2.result(&mut check);
 
-        let mut bits = vec!(false; data.len() * 8 + data.len()/ 4);
-        for i in 0 .. data.len () {
-            for j in 0 .. 8 {
-                bits [i * 8 + j] = (data [i] & (1 << (7 - j))) > 0;
+        let mut bits = vec![false; data.len() * 8 + data.len() / 4];
+        for i in 0..data.len() {
+            for j in 0..8 {
+                bits[i * 8 + j] = (data[i] & (1 << (7 - j))) > 0;
             }
         }
-        for i in 0 .. data.len() / 4 {
-            bits [8 * data.len() + i] = (check [i / 8] & (1 << (7 - (i % 8)))) > 0;
+        for i in 0..data.len() / 4 {
+            bits[8 * data.len() + i] = (check[i / 8] & (1 << (7 - (i % 8)))) > 0;
         }
-        let mlen = data.len () * 3 / 4;
+        let mlen = data.len() * 3 / 4;
         let mut memo = Vec::new();
-        for i in 0 .. mlen {
+        for i in 0..mlen {
             let mut idx = 0;
-            for j in 0 .. 11 {
-                if bits [i * 11 + j] {
+            for j in 0..11 {
+                if bits[i * 11 + j] {
                     idx += 1 << (10 - j);
                 }
             }
             memo.push(WORDS[idx]);
         }
         Ok(Mnemonic(memo))
+    }
+
+    // invert of Mnemonic::mnemonic
+    fn data(&self) -> Result<Vec<u8>, WalletError> {
+        let full_length = self.0.len() * 11;
+        let data_length = full_length * 32 / 33;
+        let check_length = full_length - data_length;
+
+        assert_eq!(full_length % 3, 0);
+
+        // convert words into bits
+        let mut bits = Vec::with_capacity(full_length);
+        for word in self.0.iter() {
+            let index = WORDS
+                .binary_search(word)
+                .map_err(|_| WalletError::Generic("Mnemonic contains an unknown word"))?;
+            for i in 0..11 {
+                bits.push(index & (1 << (10 - i)) > 0);
+            }
+        }
+
+        // convert bits into bytes
+        let data = bits
+            .as_slice()
+            .chunks(8)
+            .map(|bits| {
+                bits.iter()
+                    .enumerate()
+                    .fold(0u8, |accumulator, (index, &bit)| {
+                        accumulator + (if bit { 1 } else { 0 } << (7 - index))
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        // split
+        let (data, check) = data.split_at(data_length / 8);
+
+        // calc reference checksum
+        let mut calc_check = [0u8; 32];
+        let mut sha2 = Sha256::new();
+        sha2.input(data);
+        sha2.result(&mut calc_check);
+
+        // calc checking ranges, `check_bytes` will be 0 if entropy < 256
+        let check_bytes = check_length / 8;
+        let check_bits = check_length % 8;
+        let check_bits_inv = (8 - (check_bits as u8)) % 8;
+        let mask = !((1 << check_bits_inv) - 1);
+
+        let check_bytes_result = check[0..check_bytes] == calc_check[0..check_bytes];
+        let check_bits_result =
+            check_bits == 0 || (check[check_bytes] == (calc_check[check_bytes] & mask));
+
+        if check_bytes_result && check_bits_result {
+            Ok(data.to_vec())
+        } else {
+            Err(WalletError::Generic(
+                "Invalid mnemonic checking bits not match",
+            ))
+        }
     }
 }
 
@@ -115,7 +201,7 @@ mod test {
     use keyfactory::KeyFactory;
 
     #[test]
-    fn test_mnemonic () {
+    fn test_mnemonic() {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("tests/BIP39.json");
         let mut file = File::open(d).unwrap();
@@ -127,12 +213,16 @@ mod test {
 
         let mut pk_test_count = 0;
 
-        for t in 0 .. tests.len() {
+        for t in 0..tests.len() {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_string().unwrap()).unwrap();
             let mnemonic = Mnemonic::from(values[1].as_string().unwrap()).unwrap();
             let seed = Seed::new(&mnemonic, "TREZOR");
-            assert_eq!(mnemonic.to_string(), Mnemonic::mnemonic(data.as_slice()).unwrap().to_string());
+            assert_eq!(
+                mnemonic.to_string(),
+                Mnemonic::mnemonic(data.as_slice()).unwrap().to_string()
+            );
+            assert_eq!(mnemonic.data().unwrap(), data);
             assert_eq!(seed.data(), decode(values[2].as_string().unwrap()).unwrap());
 
             if values.len() == 4 {
@@ -147,8 +237,14 @@ mod test {
         }
         assert_eq!(pk_test_count, 24); // 24 test cases with private key
 
-        assert!(Mnemonic::from("letter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_ok());
-        assert!(Mnemonic::from("getter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_err());
+        assert!(Mnemonic::from(
+            "letter advice cage absurd amount doctor acoustic avoid letter advice cage above"
+        )
+        .is_ok());
+        assert!(Mnemonic::from(
+            "getter advice cage absurd amount doctor acoustic avoid letter advice cage above"
+        )
+        .is_err());
     }
 }
 

@@ -20,14 +20,11 @@ use bitcoin::{
 use protobuf::RepeatedField;
 use grpc;
 use tls_api_native_tls;
-use bitcoin_rpc_client::BitcoinCoreClient;
 use wallet::{
     account::{Utxo, AccountAddressType},
-    walletlibrary::{WalletConfig, BitcoindConfig, LockId},
-    default::WalletWithTrustedFullNode,
-    interface::{WalletLibraryInterface, Wallet as WalletInterface},
+    walletlibrary::LockId,
+    interface::Wallet as WalletInterface,
 };
-use bitcoin_core_io::BitcoinCoreIO;
 
 use std::{
     thread,
