@@ -51,7 +51,7 @@ use mnemonic::Mnemonic;
 use keyfactory::{KeyFactory, MasterKeyEntropy};
 use account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain};
 use db::DB;
-use interface::{Wallet, BlockChainIO};
+use interface::{WalletLibraryInterface, BlockChainIO};
 
 pub static DEFAULT_BITCOIND_RPC_CONNECT: &'static str = "http://127.0.0.1:18332";
 pub static DEFAULT_BITCOIND_RPC_USER: &'static str = "user";
@@ -235,7 +235,7 @@ pub struct WalletLibrary {
     pub db: Arc<RwLock<DB>>,
 }
 
-impl Wallet for WalletLibrary {
+impl WalletLibraryInterface for WalletLibrary {
     fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>> {
         self.get_account_mut(address_type).new_address()
     }
@@ -438,6 +438,141 @@ impl Wallet for WalletLibrary {
 
         Ok(tx)
     }
+
+    fn get_last_seen_block_height_from_memory(&self) -> usize {
+        self.last_seen_block_height
+    }
+
+    fn update_last_seen_block_height_in_memory(&mut self, block_height: usize) {
+        self.last_seen_block_height = block_height;
+    }
+
+    fn update_last_seen_block_height_in_db(&mut self, block_height: usize) {
+        self.db.write().unwrap().put_last_seen_block_height(block_height as u32);
+    }
+
+    fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
+        match address_type {
+            AccountAddressType::P2PKH  => &mut self.p2pkh_account,
+            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
+            AccountAddressType::P2WKH  => &mut self.p2wkh_account,
+        }
+    }
+
+    fn get_full_address_list(&self) -> Vec<String> {
+        [
+            self.p2pkh_account.btc_address_list.clone(),
+            self.p2shwh_account.btc_address_list.clone(),
+            self.p2wkh_account.btc_address_list.clone(),
+        ].concat()
+    }
+
+    fn process_tx(&mut self, tx: &Transaction) {
+        let account_list = &mut [
+            &mut self.p2pkh_account,
+            &mut self.p2shwh_account,
+            &mut self.p2wkh_account,
+        ];
+
+        for input_index in 0..tx.input.len() {
+            let input = &tx.input[input_index];
+            if self.op_to_utxo.contains_key(&input.previous_output) {
+                {
+                    // remove from account utxo map
+                    let utxo = self.op_to_utxo.get(&input.previous_output).unwrap();
+                    let mut acc = &mut account_list[usize::from(utxo.addr_type.clone())];
+                    let mut utxo_map = &mut acc.utxo_list;
+                    utxo_map.remove(&input.previous_output).unwrap();
+
+                    self.db.write().unwrap().delete_utxo(&utxo.out_point);
+                }
+
+                // remove from account_factory utxo_map
+                self.op_to_utxo.remove(&input.previous_output).unwrap();
+            }
+        }
+        for account_index in 0..account_list.len() {
+            let mut account = &mut account_list[account_index];
+
+            for output_index in 0..tx.output.len() {
+                let output = &tx.output[output_index];
+                let actual = &output.script_pubkey.to_bytes();
+                let mut joined = account.external_pk_list.clone();
+                joined.extend_from_slice(&account.internal_pk_list);
+
+                // TODO(evg): something better?
+                let external_pk_list_len = account.external_pk_list.len();
+                let get_pk_index = |mut raw: usize| -> (usize, AddressChain) {
+                    let mut addr_chain = AddressChain::External;
+                    if raw >= external_pk_list_len {
+                        raw -= external_pk_list_len;
+                        addr_chain = AddressChain::Internal;
+                    }
+                    (raw, addr_chain)
+                };
+
+                let op = OutPoint {
+                    txid: tx.txid(),
+                    vout: output_index as u32,
+                };
+
+                if output.script_pubkey.is_p2pkh() && account.address_type == AccountAddressType::P2PKH {
+                    // TODO(evg): use correct index
+                    for pk_index in 0..joined.len() {
+                        let pk = &joined[pk_index];
+                        let script = account.script_from_pk(pk);
+                        let expected = &script.to_bytes();
+                        if actual == expected {
+                            let cache = get_pk_index(pk_index);
+                            let key_path = KeyPath::new(cache.1, cache.0 as u32);
+
+                            let utxo = Utxo::new(output.value, key_path, op,
+                                                 account_index as u32, script, AccountAddressType::P2PKH);
+
+                            account.grab_utxo(utxo.clone());
+                            self.op_to_utxo.insert(op, utxo);
+                        }
+                    }
+                }
+
+                if output.script_pubkey.is_p2sh() && account.address_type == AccountAddressType::P2SHWH {
+                    for pk_index in 0..joined.len() {
+                        let pk = &joined[pk_index];
+                        let script = account.script_from_pk(pk);
+                        let expected = &script.to_bytes();
+                        if actual == expected {
+                            let cache = get_pk_index(pk_index);
+                            let key_path = KeyPath::new(cache.1, cache.0 as u32);
+
+                            let utxo = Utxo::new(output.value, key_path, op,
+                                                 account_index as u32, script, AccountAddressType::P2SHWH);
+
+                            account.grab_utxo(utxo.clone());
+                            self.op_to_utxo.insert(op, utxo);
+                        }
+                    }
+                }
+
+                if output.script_pubkey.is_v0_p2wpkh() && account.address_type == AccountAddressType::P2WKH {
+                    for pk_index in 0..joined.len() {
+                        let pk = &joined[pk_index];
+                        let script = account.script_from_pk(pk);
+                        let expected = &script.to_bytes();
+                        if actual == expected {
+                            let cache = get_pk_index(pk_index);
+                            let key_path = KeyPath::new(cache.1, cache.0 as u32);
+
+                            let utxo = Utxo::new(output.value, key_path, op,
+                                                 account_index as u32, script, AccountAddressType::P2WKH);
+
+                            account.grab_utxo(utxo.clone());
+                            self.op_to_utxo.insert(op, utxo);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl WalletLibrary {
@@ -616,129 +751,6 @@ impl WalletLibrary {
             AccountAddressType::P2PKH  => &self.p2pkh_account,
             AccountAddressType::P2SHWH => &self.p2shwh_account,
             AccountAddressType::P2WKH  => &self.p2wkh_account,
-        }
-    }
-
-    pub fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
-        match address_type {
-            AccountAddressType::P2PKH  => &mut self.p2pkh_account,
-            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
-            AccountAddressType::P2WKH  => &mut self.p2wkh_account,
-        }
-    }
-
-    pub fn get_full_address_list(&self) -> Vec<String> {
-        [
-            self.p2pkh_account.btc_address_list.clone(),
-            self.p2shwh_account.btc_address_list.clone(),
-            self.p2wkh_account.btc_address_list.clone(),
-        ].concat()
-    }
-
-    pub fn process_tx(&mut self, tx: &Transaction) {
-        let account_list = &mut [
-            &mut self.p2pkh_account,
-            &mut self.p2shwh_account,
-            &mut self.p2wkh_account,
-        ];
-
-        for input_index in 0..tx.input.len() {
-            let input = &tx.input[input_index];
-            if self.op_to_utxo.contains_key(&input.previous_output) {
-                {
-                    // remove from account utxo map
-                    let utxo = self.op_to_utxo.get(&input.previous_output).unwrap();
-                    let mut acc = &mut account_list[usize::from(utxo.addr_type.clone())];
-                    let mut utxo_map = &mut acc.utxo_list;
-                    utxo_map.remove(&input.previous_output).unwrap();
-
-                    self.db.write().unwrap().delete_utxo(&utxo.out_point);
-                }
-
-                // remove from account_factory utxo_map
-                self.op_to_utxo.remove(&input.previous_output).unwrap();
-            }
-        }
-        for account_index in 0..account_list.len() {
-            let mut account = &mut account_list[account_index];
-
-            for output_index in 0..tx.output.len() {
-                let output = &tx.output[output_index];
-                let actual = &output.script_pubkey.to_bytes();
-                let mut joined = account.external_pk_list.clone();
-                joined.extend_from_slice(&account.internal_pk_list);
-
-                // TODO(evg): something better?
-                let external_pk_list_len = account.external_pk_list.len();
-                let get_pk_index = |mut raw: usize| -> (usize, AddressChain) {
-                    let mut addr_chain = AddressChain::External;
-                    if raw >= external_pk_list_len {
-                        raw -= external_pk_list_len;
-                        addr_chain = AddressChain::Internal;
-                    }
-                    (raw, addr_chain)
-                };
-
-                let op = OutPoint {
-                    txid: tx.txid(),
-                    vout: output_index as u32,
-                };
-
-                if output.script_pubkey.is_p2pkh() && account.address_type == AccountAddressType::P2PKH {
-                    // TODO(evg): use correct index
-                    for pk_index in 0..joined.len() {
-                        let pk = &joined[pk_index];
-                        let script = account.script_from_pk(pk);
-                        let expected = &script.to_bytes();
-                        if actual == expected {
-                            let cache = get_pk_index(pk_index);
-                            let key_path = KeyPath::new(cache.1, cache.0 as u32);
-
-                            let utxo = Utxo::new(output.value, key_path, op,
-                                                 account_index as u32, script, AccountAddressType::P2PKH);
-
-                            account.grab_utxo(utxo.clone());
-                            self.op_to_utxo.insert(op, utxo);
-                        }
-                    }
-                }
-
-                if output.script_pubkey.is_p2sh() && account.address_type == AccountAddressType::P2SHWH {
-                    for pk_index in 0..joined.len() {
-                        let pk = &joined[pk_index];
-                        let script = account.script_from_pk(pk);
-                        let expected = &script.to_bytes();
-                        if actual == expected {
-                            let cache = get_pk_index(pk_index);
-                            let key_path = KeyPath::new(cache.1, cache.0 as u32);
-
-                            let utxo = Utxo::new(output.value, key_path, op,
-                                                 account_index as u32, script, AccountAddressType::P2SHWH);
-
-                            account.grab_utxo(utxo.clone());
-                            self.op_to_utxo.insert(op, utxo);
-                        }
-                    }
-                }
-
-                if output.script_pubkey.is_v0_p2wpkh() && account.address_type == AccountAddressType::P2WKH {
-                    for pk_index in 0..joined.len() {
-                        let pk = &joined[pk_index];
-                        let script = account.script_from_pk(pk);
-                        let expected = &script.to_bytes();
-                        if actual == expected {
-                            let cache = get_pk_index(pk_index);
-                            let key_path = KeyPath::new(cache.1, cache.0 as u32);
-
-                            let utxo = Utxo::new(output.value, key_path, op,
-                                                 account_index as u32, script, AccountAddressType::P2WKH);
-
-                            account.grab_utxo(utxo.clone());
-                            self.op_to_utxo.insert(op, utxo);
-                        }
-                    }
-                }
-            }
         }
     }
 }

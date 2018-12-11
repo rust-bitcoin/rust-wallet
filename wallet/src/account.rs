@@ -332,7 +332,7 @@ mod test {
     use walletlibrary::WalletConfigBuilder;
     use default::WalletWithTrustedFullNode;
     use account::AccountAddressType;
-    use interface::{BlockChainIO, Wallet};
+    use interface::{BlockChainIO, WalletLibraryInterface};
 
     struct FakeBlockChainIO;
 

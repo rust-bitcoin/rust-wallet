@@ -25,7 +25,7 @@ use wallet::{
     account::{Utxo, AccountAddressType},
     walletlibrary::{WalletConfig, BitcoindConfig, LockId},
     default::WalletWithTrustedFullNode,
-    interface::Wallet as WalletInterface,
+    interface::{WalletLibraryInterface, Wallet as WalletInterface},
 };
 use bitcoin_core_io::BitcoinCoreIO;
 

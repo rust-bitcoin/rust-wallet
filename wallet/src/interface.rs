@@ -22,6 +22,29 @@ use walletlibrary::LockId;
 use std::error::Error;
 
 pub trait Wallet {
+    fn wallet_lib(&self) -> &Box<WalletLibraryInterface + Send>;
+    fn wallet_lib_mut(&mut self) -> &mut Box<WalletLibraryInterface + Send>;
+    fn reconnect(&mut self);
+    fn send_coins(
+        &mut self,
+        addr_str: String,
+        amt: u64,
+        submit: bool,
+        lock_coins: bool,
+        witness_only: bool,
+    ) -> Result<(Transaction, LockId), Box<Error>>;
+    fn make_tx(
+        &mut self,
+        ops: Vec<OutPoint>,
+        addr_str: String,
+        amt: u64,
+        submit: bool,
+    ) -> Result<Transaction, Box<Error>>;
+    fn publish_tx(&mut self, tx: &Transaction);
+    fn sync_with_tip(&mut self);
+}
+
+pub trait WalletLibraryInterface {
     fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>>;
     fn new_change_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>>;
     fn get_utxo_list(&self) -> Vec<Utxo>;
@@ -40,6 +63,12 @@ pub trait Wallet {
         addr_str: String,
         amt: u64,
     ) -> Result<Transaction, Box<Error>>;
+    fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account;
+    fn get_last_seen_block_height_from_memory(&self) -> usize;
+    fn update_last_seen_block_height_in_memory(&mut self, block_height: usize);
+    fn update_last_seen_block_height_in_db(&mut self, block_height: usize);
+    fn get_full_address_list(&self) -> Vec<String>;
+    fn process_tx(&mut self, tx: &Transaction);
 }
 
 pub trait BlockChainIO {

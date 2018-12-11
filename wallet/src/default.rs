@@ -17,13 +17,52 @@ use bitcoin::{Block, Transaction, OutPoint};
 use std::error::Error;
 
 use walletlibrary::{WalletLibrary, WalletConfig, LockId};
-use interface::{BlockChainIO, Wallet};
+use interface::{BlockChainIO, WalletLibraryInterface, Wallet};
 use error::WalletError;
 
 // a factory for TREZOR (BIP44) compatible accounts
 pub struct WalletWithTrustedFullNode {
-    pub wallet_lib: WalletLibrary,
+    pub wallet_lib: Box<WalletLibraryInterface + Send>,
     bio: Box<BlockChainIO + Send>,
+}
+
+impl Wallet for WalletWithTrustedFullNode {
+    fn wallet_lib(&self) -> &Box<WalletLibraryInterface + Send> {
+        &self.wallet_lib
+    }
+
+    fn wallet_lib_mut(&mut self) -> &mut Box<WalletLibraryInterface + Send> {
+        &mut self.wallet_lib
+    }
+
+    fn reconnect(&mut self) {}
+
+    fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool, submit: bool) -> Result<(Transaction, LockId), Box<Error>> {
+        let (tx, lock_id) = self.wallet_lib.send_coins(addr_str, amt, lock_coins, witness_only)?;
+        if submit {
+            self.bio.send_raw_transaction(&tx);
+        }
+        Ok((tx, lock_id))
+    }
+
+    fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64, submit: bool) -> Result<Transaction, Box<Error>> {
+        let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
+        if submit {
+            self.bio.send_raw_transaction(&tx);
+        }
+        Ok(tx)
+    }
+
+    fn publish_tx(&mut self, tx: &Transaction) {
+        self.bio.send_raw_transaction(tx);
+    }
+
+    fn sync_with_tip(&mut self) {
+        let block_height = self.bio.get_block_count();
+
+        let start_from = self.wallet_lib.get_last_seen_block_height_from_memory() + 1;
+        self.process_block_range(start_from, block_height as usize);
+    }
 }
 
 impl WalletWithTrustedFullNode {
@@ -50,7 +89,7 @@ impl WalletWithTrustedFullNode {
 //    }
 
     pub fn new_no_random (wc: WalletConfig, bio: Box<BlockChainIO + Send>) -> Result<WalletWithTrustedFullNode, WalletError> {
-        let wallet_lib = WalletLibrary::new_no_random(wc).unwrap();
+        let wallet_lib = Box::new(WalletLibrary::new_no_random(wc).unwrap());
 
         Ok(WalletWithTrustedFullNode {
             wallet_lib,
@@ -80,34 +119,14 @@ impl WalletWithTrustedFullNode {
 //        })
 //    }
 
-    pub fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64, submit: bool) -> Result<Transaction, Box<Error>> {
-        let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
-        if submit {
-            self.bio.send_raw_transaction(&tx);
-        }
-        Ok(tx)
-    }
-
-    pub fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool, submit: bool) -> Result<(Transaction, LockId), Box<Error>> {
-        let (tx, lock_id) = self.wallet_lib.send_coins(addr_str, amt, lock_coins, witness_only)?;
-        if submit {
-            self.bio.send_raw_transaction(&tx);
-        }
-        Ok((tx, lock_id))
-    }
-
-    pub fn publish_tx(&self, tx: &Transaction) {
-        self.bio.send_raw_transaction(tx);
-    }
-
     fn process_block(&mut self, block_height: usize, block: &Block) {
         for tx in &block.txdata {
             self.wallet_lib.process_tx(&tx);
         }
         // TODO(evg): if block_height > self.last_seen_block_height?
-        self.wallet_lib.last_seen_block_height = block_height;
+        self.wallet_lib.update_last_seen_block_height_in_memory(block_height);
 
-        self.wallet_lib.db.write().unwrap().put_last_seen_block_height(block_height as u32);
+        self.wallet_lib.update_last_seen_block_height_in_db(block_height);
     }
 
     fn process_block_range(&mut self, left: usize, right: usize) {
@@ -116,12 +135,5 @@ impl WalletWithTrustedFullNode {
             let block = self.bio.get_block(&block_hash);
             self.process_block(i, &block);
         }
-    }
-
-    pub fn sync_with_tip(&mut self) {
-        let block_height = self.bio.get_block_count();
-
-        let start_from = self.wallet_lib.last_seen_block_height + 1;
-        self.process_block_range(start_from, block_height as usize);
     }
 }

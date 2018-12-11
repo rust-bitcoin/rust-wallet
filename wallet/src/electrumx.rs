@@ -28,38 +28,28 @@ use electrumx_client::{
     interface::Electrumx,
 };
 use walletlibrary::{WalletLibrary, WalletConfig, LockId};
-use interface::Wallet;
+use interface::{WalletLibraryInterface, Wallet};
 use error::WalletError;
 
 pub struct ElectrumxWallet {
-    pub wallet_lib: WalletLibrary,
+    pub wallet_lib: Box<WalletLibraryInterface + Send>,
     electrumx_client: ElectrumxClient<String>,
 }
 
-impl ElectrumxWallet {
-    pub fn new_no_random (wc: WalletConfig) -> Result<ElectrumxWallet, WalletError> {
-        let wallet_lib = WalletLibrary::new_no_random(wc).unwrap();
-        let electrumx_client = ElectrumxClient::new("127.0.0.1:60401".to_string()).unwrap();
-
-        Ok(ElectrumxWallet {
-            wallet_lib,
-            electrumx_client,
-        })
+impl Wallet for ElectrumxWallet {
+    fn wallet_lib(&self) -> &Box<WalletLibraryInterface + Send> {
+        &self.wallet_lib
     }
 
-    pub fn reconnect(&mut self) {
+    fn wallet_lib_mut(&mut self) -> &mut Box<WalletLibraryInterface + Send> {
+        &mut self.wallet_lib
+    }
+
+    fn reconnect(&mut self) {
         self.electrumx_client = ElectrumxClient::new("127.0.0.1:60401".to_string()).unwrap();
     }
 
-    pub fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64, submit: bool) -> Result<Transaction, Box<Error>> {
-        let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
-        if submit {
-            self.publish_tx(&tx);
-        }
-        Ok(tx)
-    }
-
-    pub fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool, submit: bool) -> Result<(Transaction, LockId), Box<Error>> {
+    fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool, submit: bool) -> Result<(Transaction, LockId), Box<Error>> {
         let (tx, lock_id) = self.wallet_lib.send_coins(addr_str, amt, lock_coins, witness_only)?;
         if submit {
             self.publish_tx(&tx);
@@ -67,13 +57,21 @@ impl ElectrumxWallet {
         Ok((tx, lock_id))
     }
 
-    pub fn publish_tx(&mut self, tx: &Transaction) {
+    fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64, submit: bool) -> Result<Transaction, Box<Error>> {
+        let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
+        if submit {
+            self.publish_tx(&tx);
+        }
+        Ok(tx)
+    }
+
+    fn publish_tx(&mut self, tx: &Transaction) {
         let tx = serialize_hex(tx).unwrap();
         self.electrumx_client.broadcast_transaction(tx).unwrap();
     }
 
     // TODO(evg): something better?
-    pub fn sync_with_tip(&mut self) {
+    fn sync_with_tip(&mut self) {
         println!("******** SYNC_WITH_TIP_BEGIN ********");
         let mut all_wallet_related_txs = Vec::new();
         let btc_address_list = self.wallet_lib.get_full_address_list();
@@ -110,5 +108,17 @@ impl ElectrumxWallet {
             to_skip.insert(tx_hash, ());
         }
         println!("******** SYNC_WITH_TIP_END ********\n\n\n");
+    }
+}
+
+impl ElectrumxWallet {
+    pub fn new_no_random (wc: WalletConfig) -> Result<ElectrumxWallet, WalletError> {
+        let wallet_lib = Box::new(WalletLibrary::new_no_random(wc).unwrap());
+        let electrumx_client = ElectrumxClient::new("127.0.0.1:60401".to_string()).unwrap();
+
+        Ok(ElectrumxWallet {
+            wallet_lib,
+            electrumx_client,
+        })
     }
 }
