@@ -94,12 +94,12 @@ impl Into<RpcAddressType> for AccountAddressType {
 struct ShutdownSignal;
 
 struct WalletImpl {
-    af: Arc<Mutex<WalletWithTrustedFullNode>>,
+    af: Arc<Mutex<Box<WalletInterface + Send>>>,
     shutdown: Mutex<Sender<ShutdownSignal>>,
 }
 
 impl WalletImpl {
-    fn new(af: Arc<Mutex<WalletWithTrustedFullNode>>, shutdown: Mutex<Sender<ShutdownSignal>>) -> Self {
+    fn new(af: Arc<Mutex<Box<WalletInterface + Send>>>, shutdown: Mutex<Sender<ShutdownSignal>>) -> Self {
         Self {
             af,
             shutdown,
@@ -109,7 +109,7 @@ impl WalletImpl {
     fn new_address_helper(&self, req: &NewAddressRequest) -> Result<NewAddressResponse, Box<Error>> {
         let mut resp = NewAddressResponse::new();
         let mut ac = self.af.lock().unwrap();
-        let account = ac.wallet_lib.get_account_mut(req.get_addr_type().into());
+        let account = ac.wallet_lib_mut().get_account_mut(req.get_addr_type().into());
         let addr = account.new_address()?;
         resp.set_address(addr);
         Ok(resp)
@@ -118,7 +118,7 @@ impl WalletImpl {
     fn new_change_address(&self, req: &NewChangeAddressRequest) -> Result<NewChangeAddressResponse, Box<Error>> {
         let mut resp = NewChangeAddressResponse::new();
         let mut ac = self.af.lock().unwrap();
-        let account = ac.wallet_lib.get_account_mut(req.get_addr_type().into());
+        let account = ac.wallet_lib_mut().get_account_mut(req.get_addr_type().into());
         let addr = account.new_change_address()?;
         resp.set_address(addr);
         Ok(resp)
@@ -166,7 +166,7 @@ impl Wallet for WalletImpl {
     fn get_utxo_list(&self, _m: grpc::RequestOptions, _req: GetUtxoListRequest) -> grpc::SingleResponse<GetUtxoListResponse> {
         info!("utxo list was requested");
         let mut resp = GetUtxoListResponse::new();
-        let utxo_list = self.af.lock().unwrap().wallet_lib.get_utxo_list();
+        let utxo_list = self.af.lock().unwrap().wallet_lib().get_utxo_list();
         resp.set_utxos(RepeatedField::from_vec(utxo_list.into_iter().map(|utxo| utxo.into()).collect()));
         grpc::SingleResponse::completed(resp)
     }
@@ -174,7 +174,7 @@ impl Wallet for WalletImpl {
     fn wallet_balance(&self, _m: ::grpc::RequestOptions, _req: WalletBalanceRequest) -> grpc::SingleResponse<WalletBalanceResponse> {
         info!("wallet balance was requested");
         let mut resp = WalletBalanceResponse::new();
-        let balance = self.af.lock().unwrap().wallet_lib.wallet_balance();
+        let balance = self.af.lock().unwrap().wallet_lib().wallet_balance();
         resp.set_total_balance(balance);
         grpc::SingleResponse::completed(resp)
     }
@@ -199,7 +199,7 @@ impl Wallet for WalletImpl {
 
     fn unlock_coins(&self, _m: grpc::RequestOptions, req: UnlockCoinsRequest) -> grpc::SingleResponse<UnlockCoinsResponse> {
         info!("unlock_coins was requested");
-        self.af.lock().unwrap().wallet_lib.unlock_coins(LockId::from(req.lock_id));
+        self.af.lock().unwrap().wallet_lib_mut().unlock_coins(LockId::from(req.lock_id));
 
         let resp = UnlockCoinsResponse::new();
         grpc::SingleResponse::completed(resp)
@@ -215,9 +215,34 @@ impl Wallet for WalletImpl {
     }
 }
 
+pub fn launch_server_new(af: Box<WalletInterface + Send>, wallet_rpc_port: u16) {
+//    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+//    let af = WalletWithTrustedFullNode::new_no_random(wc, bio).unwrap();
+    let af = Arc::new(Mutex::new(af));
+
+    let (shutdown_sender, shutdown_receiver) = mpsc::channel();
+
+    let mut server: grpc::ServerBuilder<tls_api_native_tls::TlsAcceptor> = grpc::ServerBuilder::new();
+    server.http.set_port(wallet_rpc_port);
+    let wallet_impl = WalletImpl::new(af, Mutex::new(shutdown_sender));
+    server.add_service(WalletServer::new_service_def(wallet_impl));
+    server.http.set_cpu_pool_threads(1);
+    server.http.set_addr(format!("127.0.0.1:{}", DEFAULT_WALLET_RPC_PORT)).unwrap();
+    let _server = server.build().expect("server");
+
+    info!("wallet server started on port {} {}",
+          wallet_rpc_port, "without tls" );
+
+    // wait for shutdown signal from grpc client
+    shutdown_receiver.recv().unwrap();
+
+    // give some time to server gracefully shutdown
+    thread::sleep(Duration::from_millis(SHUTDOWN_TIMEOUT_IN_MS));
+}
+
 pub fn launch_server(wc: WalletConfig, cfg: BitcoindConfig, wallet_rpc_port: u16) {
     let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
-    let af = WalletWithTrustedFullNode::new_no_random(wc, bio).unwrap();
+    let af: Box<WalletInterface + Send> = Box::new(WalletWithTrustedFullNode::new_no_random(wc, bio).unwrap());
     let af = Arc::new(Mutex::new(af));
 
     let (shutdown_sender, shutdown_receiver) = mpsc::channel();
