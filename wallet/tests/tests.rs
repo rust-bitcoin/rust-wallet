@@ -96,6 +96,31 @@ fn generate_money_for_wallet(af: &mut Box<Wallet>, bitcoind_client: &BitcoinCore
     assert_eq!(af.wallet_lib().wallet_balance(), 600_000_000);
 }
 
+macro_rules! test {
+    ($base:ident) => {
+        mod $base {
+            use super::{BlockChainProvider, $base};
+            #[test]
+            fn trusted_full_node() {
+                $base(BlockChainProvider::TrustedFullNode);
+            }
+            #[test]
+            fn electrumx() {
+                $base(BlockChainProvider::Electrumx);
+            }
+        }
+    };
+}
+
+test!(sanity_check);
+test!(base_wallet_functionality);
+test!(base_persistent_storage);
+test!(extended_persistent_storage);
+test!(make_tx_call);
+test!(send_coins_call);
+test!(lock_coins_flag_success);
+test!(lock_coins_flag_fail);
+
 fn sanity_check(provider: BlockChainProvider) {
     // initialize bitcoind docker container
     // it will be destroyed automatically when appropriate object goes out of scope
@@ -149,16 +174,6 @@ fn sanity_check(provider: BlockChainProvider) {
     }
 }
 
-#[test]
-fn sanity_check_trusted_full_node() {
-    sanity_check(BlockChainProvider::TrustedFullNode);
-}
-
-#[test]
-fn sanity_check_electrumx() {
-    sanity_check(BlockChainProvider::Electrumx);
-}
-
 fn base_wallet_functionality(provider: BlockChainProvider) {
     // initialize bitcoind docker container
     // it will be destroyed automatically when appropriate object goes out of scope
@@ -210,16 +225,6 @@ fn base_wallet_functionality(provider: BlockChainProvider) {
     if provider == BlockChainProvider::Electrumx {
         electrs_process.unwrap().kill().unwrap();
     }
-}
-
-#[test]
-fn base_wallet_functionality_trusted_full_node() {
-    base_wallet_functionality(BlockChainProvider::TrustedFullNode);
-}
-
-#[test]
-fn base_wallet_functionality_electrumx() {
-    base_wallet_functionality(BlockChainProvider::Electrumx);
 }
 
 fn base_persistent_storage(provider: BlockChainProvider) {
@@ -306,16 +311,6 @@ fn base_persistent_storage(provider: BlockChainProvider) {
     if provider == BlockChainProvider::Electrumx {
         electrs_process.unwrap().kill().unwrap();
     }
-}
-
-#[test]
-fn base_persistent_storage_trusted_full_node() {
-    base_persistent_storage(BlockChainProvider::TrustedFullNode);
-}
-
-#[test]
-fn base_persistent_storage_electrumx() {
-    base_persistent_storage(BlockChainProvider::Electrumx);
 }
 
 fn extended_persistent_storage(provider: BlockChainProvider) {
@@ -436,16 +431,6 @@ fn extended_persistent_storage(provider: BlockChainProvider) {
     }
 }
 
-#[test]
-fn extended_persistent_storage_trusted_full_node() {
-    extended_persistent_storage(BlockChainProvider::TrustedFullNode);
-}
-
-#[test]
-fn extended_persistent_storage_electrumx() {
-    extended_persistent_storage(BlockChainProvider::Electrumx);
-}
-
 fn make_tx_call(provider: BlockChainProvider) {
     // initialize bitcoind docker container
     // it will be destroyed automatically when appropriate object goes out of scope
@@ -526,16 +511,6 @@ fn make_tx_call(provider: BlockChainProvider) {
     if provider == BlockChainProvider::Electrumx {
         electrs_process.unwrap().kill().unwrap();
     }
-}
-
-#[test]
-fn make_tx_call_trusted_full_node() {
-    make_tx_call(BlockChainProvider::TrustedFullNode);
-}
-
-#[test]
-fn make_tx_call_electrumx() {
-    make_tx_call(BlockChainProvider::Electrumx);
 }
 
 fn send_coins_call(provider: BlockChainProvider) {
@@ -622,16 +597,6 @@ fn send_coins_call(provider: BlockChainProvider) {
     }
 }
 
-#[test]
-fn send_coins_call_trusted_full_node() {
-    send_coins_call(BlockChainProvider::TrustedFullNode);
-}
-
-#[test]
-fn send_coins_call_electrumx() {
-    send_coins_call(BlockChainProvider::Electrumx);
-}
-
 fn lock_coins_flag_success(provider: BlockChainProvider) {
     // initialize bitcoind docker container
     // it will be destroyed automatically when appropriate object goes out of scope
@@ -712,16 +677,6 @@ fn lock_coins_flag_success(provider: BlockChainProvider) {
     }
 }
 
-#[test]
-fn lock_coins_flag_success_trusted_full_node() {
-    lock_coins_flag_success(BlockChainProvider::TrustedFullNode);
-}
-
-#[test]
-fn lock_coins_flag_success_electrumx() {
-    lock_coins_flag_success(BlockChainProvider::Electrumx);
-}
-
 fn lock_coins_flag_fail(provider: BlockChainProvider) {
     // initialize bitcoind docker container
     // it will be destroyed automatically when appropriate object goes out of scope
@@ -799,16 +754,6 @@ fn lock_coins_flag_fail(provider: BlockChainProvider) {
     if provider == BlockChainProvider::Electrumx {
         electrs_process.unwrap().kill().unwrap();
     }
-}
-
-#[test]
-fn lock_coins_flag_fail_trusted_full_node() {
-    lock_coins_flag_fail(BlockChainProvider::TrustedFullNode);
-}
-
-#[test]
-fn lock_coins_flag_fail_electrumx() {
-    lock_coins_flag_fail(BlockChainProvider::Electrumx);
 }
 
 // TODO(evg): tests for lock persistence
