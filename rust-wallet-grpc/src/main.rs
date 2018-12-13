@@ -19,18 +19,27 @@ extern crate simple_logger;
 extern crate clap;
 extern crate wallet;
 extern crate rust_wallet_grpc;
+extern crate bitcoin_core_io;
+extern crate bitcoin_rpc_client;
 
 use clap::{Arg, App};
+use bitcoin_rpc_client::BitcoinCoreClient;
 
 use std::str::FromStr;
 
-use wallet::walletlibrary::{
-    WalletConfig, BitcoindConfig,
-    DEFAULT_NETWORK, DEFAULT_ENTROPY, DEFAULT_PASSPHRASE, DEFAULT_SALT, DEFAULT_DB_PATH,
-    DEFAULT_BITCOIND_RPC_CONNECT, DEFAULT_BITCOIND_RPC_USER, DEFAULT_BITCOIND_RPC_PASSWORD,
-    DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT, DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT,
+use bitcoin_core_io::BitcoinCoreIO;
+use wallet::{
+    walletlibrary::{
+        WalletConfig, BitcoindConfig,
+        DEFAULT_NETWORK, DEFAULT_ENTROPY, DEFAULT_PASSPHRASE, DEFAULT_SALT, DEFAULT_DB_PATH,
+        DEFAULT_BITCOIND_RPC_CONNECT, DEFAULT_BITCOIND_RPC_USER, DEFAULT_BITCOIND_RPC_PASSWORD,
+        DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT, DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT,
+    },
+    default::WalletWithTrustedFullNode,
+    electrumx::ElectrumxWallet,
+    interface::Wallet,
 };
-use rust_wallet_grpc::server::{launch_server, DEFAULT_WALLET_RPC_PORT};
+use rust_wallet_grpc::server::{launch_server_new, DEFAULT_WALLET_RPC_PORT};
 
 fn main() {
     let default_wallet_rpc_port_str: &str = &DEFAULT_WALLET_RPC_PORT.to_string();
@@ -77,6 +86,8 @@ fn main() {
             .help("port of wallet's grpc server")
             .takes_value(true)
             .default_value(default_wallet_rpc_port_str))
+        .arg(Arg::with_name("electrumx")
+            .long("electrumx"))
         .get_matches();
 
     let log_level = {
@@ -102,6 +113,18 @@ fn main() {
         matches.value_of("zmqpubrawtx").unwrap().to_string(),
     );
 
+    let wallet = if matches.is_present("electrumx") {
+        let mut electrumx_wallet: Box<Wallet + Send> = Box::new(ElectrumxWallet::new_no_random(
+            wc).unwrap());
+        electrumx_wallet
+    } else {
+        let bio = Box::new(BitcoinCoreIO::new(
+            BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let mut default_wallet: Box<Wallet + Send> = Box::new(WalletWithTrustedFullNode::new_no_random(
+            wc, bio).unwrap());
+        default_wallet
+    };
+
     let wallet_rpc_port: u16 = matches.value_of("wallet_rpc_port").unwrap().parse().unwrap();
-    launch_server(wc, cfg, wallet_rpc_port);
+    launch_server_new(wallet, wallet_rpc_port);
 }

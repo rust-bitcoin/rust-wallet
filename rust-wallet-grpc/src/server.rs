@@ -215,41 +215,14 @@ impl Wallet for WalletImpl {
     }
 }
 
-pub fn launch_server_new(af: Box<WalletInterface + Send>, wallet_rpc_port: u16) {
-//    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
-//    let af = WalletWithTrustedFullNode::new_no_random(wc, bio).unwrap();
-    let af = Arc::new(Mutex::new(af));
+pub fn launch_server_new(wallet: Box<WalletInterface + Send>, wallet_rpc_port: u16) {
+    let wallet = Arc::new(Mutex::new(wallet));
 
     let (shutdown_sender, shutdown_receiver) = mpsc::channel();
 
     let mut server: grpc::ServerBuilder<tls_api_native_tls::TlsAcceptor> = grpc::ServerBuilder::new();
     server.http.set_port(wallet_rpc_port);
-    let wallet_impl = WalletImpl::new(af, Mutex::new(shutdown_sender));
-    server.add_service(WalletServer::new_service_def(wallet_impl));
-    server.http.set_cpu_pool_threads(1);
-    server.http.set_addr(format!("127.0.0.1:{}", DEFAULT_WALLET_RPC_PORT)).unwrap();
-    let _server = server.build().expect("server");
-
-    info!("wallet server started on port {} {}",
-          wallet_rpc_port, "without tls" );
-
-    // wait for shutdown signal from grpc client
-    shutdown_receiver.recv().unwrap();
-
-    // give some time to server gracefully shutdown
-    thread::sleep(Duration::from_millis(SHUTDOWN_TIMEOUT_IN_MS));
-}
-
-pub fn launch_server(wc: WalletConfig, cfg: BitcoindConfig, wallet_rpc_port: u16) {
-    let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
-    let af: Box<WalletInterface + Send> = Box::new(WalletWithTrustedFullNode::new_no_random(wc, bio).unwrap());
-    let af = Arc::new(Mutex::new(af));
-
-    let (shutdown_sender, shutdown_receiver) = mpsc::channel();
-
-    let mut server: grpc::ServerBuilder<tls_api_native_tls::TlsAcceptor> = grpc::ServerBuilder::new();
-    server.http.set_port(wallet_rpc_port);
-    let wallet_impl = WalletImpl::new(af, Mutex::new(shutdown_sender));
+    let wallet_impl = WalletImpl::new(wallet, Mutex::new(shutdown_sender));
     server.add_service(WalletServer::new_service_def(wallet_impl));
     server.http.set_cpu_pool_threads(1);
     server.http.set_addr(format!("127.0.0.1:{}", DEFAULT_WALLET_RPC_PORT)).unwrap();
