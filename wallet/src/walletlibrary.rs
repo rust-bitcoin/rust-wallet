@@ -30,8 +30,10 @@ use bitcoin::{
     blockdata::block::Block,
 
     network::constants::Network,
+    network::serialize::deserialize,
 };
 use secp256k1::{Secp256k1, PublicKey, Message};
+use hex;
 
 use std::{
     error::Error,
@@ -40,12 +42,16 @@ use std::{
     str::FromStr,
 };
 
+use electrumx_client::{
+    electrumx_client::ElectrumxClient,
+    interface::Electrumx,
+};
 use error::WalletError;
 use mnemonic::Mnemonic;
 use keyfactory::{KeyFactory, MasterKeyEntropy};
 use account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain};
 use db::DB;
-use interface::{Wallet, BlockChainIO};
+use interface::{WalletLibraryInterface, BlockChainIO};
 
 pub static DEFAULT_BITCOIND_RPC_CONNECT: &'static str = "http://127.0.0.1:18332";
 pub static DEFAULT_BITCOIND_RPC_USER: &'static str = "user";
@@ -212,8 +218,7 @@ impl LockGroupMap {
     }
 }
 
-// a factory for TREZOR (BIP44) compatible accounts
-pub struct AccountFactory {
+pub struct WalletLibrary {
     master_key: ExtendedPrivKey,
     mnemonic: Mnemonic,
     encrypted: Vec<u8>,
@@ -223,17 +228,14 @@ pub struct AccountFactory {
     #[allow(dead_code)]
     network: Network,
 
-    // TODO(evg): bio
-    bio: Box<BlockChainIO + Send>,
-
-    last_seen_block_height: usize,
+    pub last_seen_block_height: usize,
     op_to_utxo: HashMap<OutPoint, Utxo>,
     next_lock_id: LockId,
     locked_coins: LockGroupMap,
-    db: Arc<RwLock<DB>>,
+    pub db: Arc<RwLock<DB>>,
 }
 
-impl Wallet for AccountFactory {
+impl WalletLibraryInterface for WalletLibrary {
     fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>> {
         self.get_account_mut(address_type).new_address()
     }
@@ -267,7 +269,7 @@ impl Wallet for AccountFactory {
         self.locked_coins.unlock_group(lock_id);
     }
 
-    fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool, submit: bool) -> Result<(Transaction, LockId), Box<Error>> {
+    fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool) -> Result<(Transaction, LockId), Box<Error>> {
         let utxo_list = self.get_utxo_list();
 
         let mut total = 0;
@@ -291,7 +293,7 @@ impl Wallet for AccountFactory {
             }
         }
 
-        let tx = self.make_tx(subset.clone(), addr_str, amt, submit)?;
+        let tx = self.make_tx(subset.clone(), addr_str, amt)?;
         if lock_coins {
             let lock_group = LockGroup(subset);
             self.locked_coins.lock_group(self.next_lock_id.clone(), lock_group.clone());
@@ -307,7 +309,7 @@ impl Wallet for AccountFactory {
     }
 
     // TODO(evg): add version, lock_time param?
-    fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64, submit: bool) -> Result<Transaction, Box<Error>> {
+    fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64) -> Result<Transaction, Box<Error>> {
         let addr: Address = Address::from_str(&addr_str).unwrap();
 
         let mut tx = Transaction {
@@ -434,233 +436,22 @@ impl Wallet for AccountFactory {
             }
         }
 
-        if submit {
-            self.bio.send_raw_transaction(&tx);
-        }
-
         Ok(tx)
     }
 
-    fn publish_tx(&self, tx: &Transaction) {
-        self.bio.send_raw_transaction(tx);
+    fn get_last_seen_block_height_from_memory(&self) -> usize {
+        self.last_seen_block_height
     }
 
-    /// Sync from last seen(processed) block
-    fn sync_with_tip(&mut self) {
-        let block_height = self.bio.get_block_count();
-
-        let start_from = self.last_seen_block_height + 1;
-        self.process_block_range(start_from, block_height as usize);
-    }
-}
-
-impl AccountFactory {
-    /// initialize with new random master key
-    // TODO(evg): avoid code duplicate
-//    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
-//        let key_factory = KeyFactory::new();
-//        let (master_key, mnemonic, encrypted) = key_factory.new_master_private_key (entropy, network, passphrase, salt)?;
-//        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
-//        let db = DB::open_default("rocks.db").unwrap();
-//        Ok(AccountFactory{
-//            key_factory: Arc::new(key_factory),
-//            master_key,
-//            mnemonic,
-//            encrypted,
-//            account_list: Vec::new(),
-//            network,
-//            cfg,
-//            client,
-//            last_seen_block_height: 1,
-//            op_to_utxo: HashMap::new(),
-//            db: Arc::new(RwLock::new(db)),
-//        })
-//    }
-
-    pub fn new_no_random (wc: WalletConfig, bio: Box<BlockChainIO + Send>) -> Result<AccountFactory, WalletError> {
-        let (master_key, mnemonic, encrypted, _) =
-            KeyFactory::new_master_private_key_no_random (
-                wc.entropy,
-                wc.network,
-                &wc.passphrase,
-                &wc.salt,
-            )?;
-
-        let db = DB::new(wc.db_path);
-        let last_seen_block_height = db.get_last_seen_block_height();
-        let op_to_utxo = db.get_utxo_map();
-        let db = Arc::new(RwLock::new(db));
-
-        let p2pkh_account = AccountFactory::new_account(
-            master_key,
-            0,
-            AccountAddressType::P2PKH,
-            Network::Regtest,
-            Arc::clone(&db),
-        );
-
-        let p2shwh_account = AccountFactory::new_account(
-            master_key,
-            0,
-            AccountAddressType::P2SHWH,
-            Network::Regtest,
-            Arc::clone(&db),
-        );
-
-        let p2wkh_account = AccountFactory::new_account(
-            master_key,
-            0,
-            AccountAddressType::P2WKH,
-            Network::Regtest,
-            Arc::clone(&db),
-        );
-
-        let mut ac = AccountFactory{
-            master_key,
-            mnemonic,
-            encrypted,
-            p2pkh_account,
-            p2shwh_account,
-            p2wkh_account,
-            network: wc.network,
-            bio,
-            last_seen_block_height,
-            op_to_utxo,
-            next_lock_id: LockId::new(),
-            locked_coins: LockGroupMap::new(),
-            db,
-        };
-        let op_to_utxo = ac.op_to_utxo.clone();
-        for (_, val) in &op_to_utxo {
-            ac.get_account_mut(val.addr_type.clone()).utxo_list.insert(val.out_point, val.clone());
-        }
-
-        let external_secret_key_list = ac.db.read().unwrap().get_external_secret_key_list();
-        for (key_helper, sk) in external_secret_key_list {
-            ac.get_account_mut(key_helper.addr_type.clone()).external_sk_list.push(sk);
-        }
-
-        let external_public_key_list = ac.db.read().unwrap().get_external_public_key_list();
-        for (key_helper, pk) in external_public_key_list {
-            ac.get_account_mut(key_helper.addr_type.clone()).external_pk_list.push(pk);
-        }
-
-        let internal_secret_key_list = ac.db.read().unwrap().get_internal_secret_key_list();
-        for (key_helper, sk) in internal_secret_key_list {
-            ac.get_account_mut(key_helper.addr_type.clone()).internal_sk_list.push(sk);
-        }
-
-        let internal_public_key_list = ac.db.read().unwrap().get_internal_public_key_list();
-        for (key_helper, pk) in internal_public_key_list {
-            ac.get_account_mut(key_helper.addr_type.clone()).internal_pk_list.push(pk);
-        }
-        Ok(ac)
+    fn update_last_seen_block_height_in_memory(&mut self, block_height: usize) {
+        self.last_seen_block_height = block_height;
     }
 
-    /// decrypt stored master key
-//    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
-//        let mnemonic = Mnemonic::new (encrypted, passphrase)?;
-//        let key_factory = KeyFactory::new();
-//        let master_key = key_factory.master_private_key(network, &Seed::new(&mnemonic, salt))?;
-//        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
-//        let db = DB::open_default("rocks.db").unwrap();
-//        Ok(AccountFactory{
-//            key_factory: Arc::new(key_factory),
-//            master_key,
-//            mnemonic,
-//            encrypted: encrypted.to_vec(),
-//            account_list: Vec::new(),
-//            network,
-//            cfg,
-//            client,
-//            last_seen_block_height: 1,
-//            op_to_utxo: HashMap::new(),
-//            db: Arc::new(RwLock::new(db)),
-//        })
-//    }
-
-    /// get a copy of the master private key
-    pub fn master_private (&self) -> ExtendedPrivKey {
-        self.master_key.clone()
+    fn update_last_seen_block_height_in_db(&mut self, block_height: usize) {
+        self.db.write().unwrap().put_last_seen_block_height(block_height as u32);
     }
 
-    /// get a copy of the master public key
-    pub fn master_public (&self) -> ExtendedPubKey {
-        KeyFactory::extended_public_from_private(&self.master_key)
-    }
-
-    pub fn mnemonic (&self) -> String {
-        self.mnemonic.to_string()
-    }
-
-    pub fn encrypted (&self) -> Vec<u8> {
-        self.encrypted.clone()
-    }
-
-    /// get an account
-    pub fn extract_account_key(
-        master_key: ExtendedPrivKey,
-        account_number: u32,
-        address_type: AccountAddressType,
-    ) -> Result<ExtendedPrivKey, WalletError> {
-
-        let mut key = match address_type {
-            AccountAddressType::P2PKH  => KeyFactory::private_child(
-                &master_key,
-                ChildNumber::Hardened{index: 44},
-            )?,
-            AccountAddressType::P2SHWH => KeyFactory::private_child(
-                &master_key,
-                ChildNumber::Hardened{index: 49},
-            )?,
-            AccountAddressType::P2WKH  => KeyFactory::private_child(
-                &master_key,
-                ChildNumber::Hardened{index: 84},
-            )?,
-        };
-
-        key = match key.network {
-            Network::Bitcoin => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 0})?,
-            Network::Testnet => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 1})?,
-            // TODO(evg): `ChildNumber::Hardened{index: 2}` is it correct?
-            Network::Regtest => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 2})?,
-        };
-
-        key = KeyFactory::private_child(&key, ChildNumber::Hardened{index: account_number})?;
-
-        Ok(key)
-    }
-
-    fn new_account(
-        master_key: ExtendedPrivKey,
-        account_number: u32,
-        address_type: AccountAddressType,
-        network: Network,
-        db: Arc<RwLock<DB>>,
-    ) -> Account {
-        let key = AccountFactory::extract_account_key(
-            master_key,
-            account_number,
-            address_type.clone(),
-        ).unwrap();
-
-        Account::new(
-            key,
-            address_type,
-            network,
-            Arc::clone(&db),
-        )
-    }
-
-    fn get_account(&self, address_type: AccountAddressType) -> &Account {
-        match address_type {
-            AccountAddressType::P2PKH  => &self.p2pkh_account,
-            AccountAddressType::P2SHWH => &self.p2shwh_account,
-            AccountAddressType::P2WKH  => &self.p2wkh_account,
-        }
-    }
-
-    pub fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
+    fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
         match address_type {
             AccountAddressType::P2PKH  => &mut self.p2pkh_account,
             AccountAddressType::P2SHWH => &mut self.p2shwh_account,
@@ -668,8 +459,20 @@ impl AccountFactory {
         }
     }
 
-    pub fn process_tx(&mut self, tx: &Transaction) {
-        let account_list = &mut [&mut self.p2pkh_account, &mut self.p2shwh_account, &mut self.p2wkh_account];
+    fn get_full_address_list(&self) -> Vec<String> {
+        [
+            self.p2pkh_account.btc_address_list.clone(),
+            self.p2shwh_account.btc_address_list.clone(),
+            self.p2wkh_account.btc_address_list.clone(),
+        ].concat()
+    }
+
+    fn process_tx(&mut self, tx: &Transaction) {
+        let account_list = &mut [
+            &mut self.p2pkh_account,
+            &mut self.p2shwh_account,
+            &mut self.p2wkh_account,
+        ];
 
         for input_index in 0..tx.input.len() {
             let input = &tx.input[input_index];
@@ -770,22 +573,184 @@ impl AccountFactory {
             }
         }
     }
+}
 
-    fn process_block(&mut self, block_height: usize, block: &Block) {
-        for tx in &block.txdata {
-            self.process_tx(&tx);
+impl WalletLibrary {
+    pub fn new_no_random (wc: WalletConfig) -> Result<WalletLibrary, WalletError> {
+        let (master_key, mnemonic, encrypted, _) =
+            KeyFactory::new_master_private_key_no_random (
+                wc.entropy,
+                wc.network,
+                &wc.passphrase,
+                &wc.salt,
+            )?;
+
+        let db = DB::new(wc.db_path);
+        let last_seen_block_height = db.get_last_seen_block_height();
+        let op_to_utxo = db.get_utxo_map();
+        let db = Arc::new(RwLock::new(db));
+
+        let p2pkh_account = WalletLibrary::new_account(
+            master_key,
+            0,
+            AccountAddressType::P2PKH,
+            Network::Regtest,
+            Arc::clone(&db),
+        );
+
+        let p2shwh_account = WalletLibrary::new_account(
+            master_key,
+            0,
+            AccountAddressType::P2SHWH,
+            Network::Regtest,
+            Arc::clone(&db),
+        );
+
+        let p2wkh_account = WalletLibrary::new_account(
+            master_key,
+            0,
+            AccountAddressType::P2WKH,
+            Network::Regtest,
+            Arc::clone(&db),
+        );
+
+        let mut wallet_lib = WalletLibrary {
+            master_key,
+            mnemonic,
+            encrypted,
+            p2pkh_account,
+            p2shwh_account,
+            p2wkh_account,
+            network: wc.network,
+            last_seen_block_height,
+            op_to_utxo,
+            next_lock_id: LockId::new(),
+            locked_coins: LockGroupMap::new(),
+            db,
+        };
+
+//        let mut ac = AccountFactory{
+//            wallet_lib,
+//            bio,
+//        };
+        let op_to_utxo = wallet_lib.op_to_utxo.clone();
+        for (_, val) in &op_to_utxo {
+            wallet_lib.get_account_mut(val.addr_type.clone()).utxo_list.insert(val.out_point, val.clone());
         }
-        // TODO(evg): if block_height > self.last_seen_block_height?
-        self.last_seen_block_height = block_height;
 
-        self.db.write().unwrap().put_last_seen_block_height(block_height as u32);
+        let external_secret_key_list = wallet_lib.db.read().unwrap().get_external_secret_key_list();
+        for (key_helper, sk) in external_secret_key_list {
+            wallet_lib.get_account_mut(key_helper.addr_type.clone()).external_sk_list.push(sk);
+        }
+
+        let external_public_key_list = wallet_lib.db.read().unwrap().get_external_public_key_list();
+        for (key_helper, pk) in external_public_key_list {
+            wallet_lib.get_account_mut(key_helper.addr_type.clone()).external_pk_list.push(pk);
+        }
+
+        let internal_secret_key_list = wallet_lib.db.read().unwrap().get_internal_secret_key_list();
+        for (key_helper, sk) in internal_secret_key_list {
+            wallet_lib.get_account_mut(key_helper.addr_type.clone()).internal_sk_list.push(sk);
+        }
+
+        let internal_public_key_list = wallet_lib.db.read().unwrap().get_internal_public_key_list();
+        for (key_helper, pk) in internal_public_key_list {
+            wallet_lib.get_account_mut(key_helper.addr_type.clone()).internal_pk_list.push(pk);
+        }
+
+        let p2pkh_addr_list = wallet_lib.db.read().unwrap().get_account_address_list(AccountAddressType::P2PKH);
+        for addr in p2pkh_addr_list {
+            wallet_lib.get_account_mut(AccountAddressType::P2PKH).btc_address_list.push(addr);
+        }
+        let p2shwh_addr_list = wallet_lib.db.read().unwrap().get_account_address_list(AccountAddressType::P2SHWH);
+        for addr in p2shwh_addr_list {
+            wallet_lib.get_account_mut(AccountAddressType::P2SHWH).btc_address_list.push(addr);
+        }
+        let p2wkh_addr_list = wallet_lib.db.read().unwrap().get_account_address_list(AccountAddressType::P2WKH);
+        for addr in p2wkh_addr_list {
+            wallet_lib.get_account_mut(AccountAddressType::P2WKH).btc_address_list.push(addr);
+        }
+        Ok(wallet_lib)
     }
 
-    fn process_block_range(&mut self, left: usize, right: usize) {
-        for i in left..right+1 {
-            let block_hash = self.bio.get_block_hash(i as u32);
-            let block = self.bio.get_block(&block_hash);
-            self.process_block(i, &block);
+    /// get a copy of the master private key
+    pub fn master_private (&self) -> ExtendedPrivKey {
+        self.master_key.clone()
+    }
+
+    /// get a copy of the master public key
+    pub fn master_public (&self) -> ExtendedPubKey {
+        KeyFactory::extended_public_from_private(&self.master_key)
+    }
+
+    pub fn mnemonic (&self) -> String {
+        self.mnemonic.to_string()
+    }
+
+    pub fn encrypted (&self) -> Vec<u8> {
+        self.encrypted.clone()
+    }
+
+    /// get an account
+    pub fn extract_account_key(
+        master_key: ExtendedPrivKey,
+        account_number: u32,
+        address_type: AccountAddressType,
+    ) -> Result<ExtendedPrivKey, WalletError> {
+
+        let mut key = match address_type {
+            AccountAddressType::P2PKH  => KeyFactory::private_child(
+                &master_key,
+                ChildNumber::Hardened{index: 44},
+            )?,
+            AccountAddressType::P2SHWH => KeyFactory::private_child(
+                &master_key,
+                ChildNumber::Hardened{index: 49},
+            )?,
+            AccountAddressType::P2WKH  => KeyFactory::private_child(
+                &master_key,
+                ChildNumber::Hardened{index: 84},
+            )?,
+        };
+
+        key = match key.network {
+            Network::Bitcoin => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 0})?,
+            Network::Testnet => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 1})?,
+            // TODO(evg): `ChildNumber::Hardened{index: 2}` is it correct?
+            Network::Regtest => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 2})?,
+        };
+
+        key = KeyFactory::private_child(&key, ChildNumber::Hardened{index: account_number})?;
+
+        Ok(key)
+    }
+
+    fn new_account(
+        master_key: ExtendedPrivKey,
+        account_number: u32,
+        address_type: AccountAddressType,
+        network: Network,
+        db: Arc<RwLock<DB>>,
+    ) -> Account {
+        let key = WalletLibrary::extract_account_key(
+            master_key,
+            account_number,
+            address_type.clone(),
+        ).unwrap();
+
+        Account::new(
+            key,
+            address_type,
+            network,
+            Arc::clone(&db),
+        )
+    }
+
+    fn get_account(&self, address_type: AccountAddressType) -> &Account {
+        match address_type {
+            AccountAddressType::P2PKH  => &self.p2pkh_account,
+            AccountAddressType::P2SHWH => &self.p2shwh_account,
+            AccountAddressType::P2WKH  => &self.p2wkh_account,
         }
     }
 }

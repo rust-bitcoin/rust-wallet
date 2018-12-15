@@ -1,6 +1,8 @@
 sudo: required
 
 language: rust
+rust:
+- 1.29.1
 
 services:
   - docker
@@ -13,6 +15,14 @@ addons:
 
 before_install:
   - docker pull lightningnetwork/bitcoind-alpine:0.16.1-r2
+  - CURRENT_DIR=$(pwd) &&
+    cd /tmp &&
+    git clone https://github.com/romanz/electrs &&
+    cd electrs &&
+    git checkout e49cef1bbcaf1710613dab4578d61b99c7dbd478 &&
+    cargo install --debug --path . &&
+    cd $CURRENT_DIR
+  - ls $HOME/.cargo/bin
 
 install:
   - RUST_BACKTRACE=1 cargo build --no-default-features --verbose

@@ -20,8 +20,8 @@ use serde_json;
 
 use std::collections::HashMap;
 
-use account::{Utxo, SecretKeyHelper};
-use accountfactory::{LockId, LockGroup};
+use account::{Utxo, SecretKeyHelper, AccountAddressType};
+use walletlibrary::{LockId, LockGroup};
 
 static LAST_SEEN_BLOCK_HEIGHT: &'static [u8] = b"lsbh";
 static UTXO_MAP_CF: &'static str = "utxo_map";
@@ -29,6 +29,9 @@ static EXTERNAL_SECRET_KEY_CF: &'static str = "eskcf";
 static EXTERNAL_PUBLIC_KEY_CF: &'static str = "epkcf";
 static INTERNAL_SECRET_KEY_CF: &'static str = "iskcf";
 static INTERNAL_PUBLIC_KEY_CF: &'static str = "ipkcf";
+static P2PKH_ADDRESS_CF:  &'static str = "p2pkh";
+static P2SHWH_ADDRESS_CF: &'static str = "p2shwh";
+static P2WKH_ADDRESS_CF:  &'static str = "p2wkh";
 static LOCK_GROUP_MAP_CF: &'static str = "lgm";
 
 pub struct DB(RocksDB);
@@ -52,6 +55,18 @@ impl DB {
             INTERNAL_PUBLIC_KEY_CF,
             Options::default(),
         );
+        let p2pkh_address_cf = ColumnFamilyDescriptor::new(
+            P2PKH_ADDRESS_CF,
+            Options::default(),
+        );
+        let p2shwh_address_cf = ColumnFamilyDescriptor::new(
+            P2SHWH_ADDRESS_CF,
+            Options::default(),
+        );
+        let p2wkh_address_cf = ColumnFamilyDescriptor::new(
+            P2WKH_ADDRESS_CF,
+            Options::default(),
+        );
         let lock_group_map_cf = ColumnFamilyDescriptor::new(LOCK_GROUP_MAP_CF, Options::default());
 
         let mut db_opts = Options::default();
@@ -67,6 +82,9 @@ impl DB {
                 internal_secret_key_cf,
                 internal_public_key_cf,
                 lock_group_map_cf,
+                p2pkh_address_cf,
+                p2shwh_address_cf,
+                p2wkh_address_cf,
             ],
         ).unwrap();
         DB(db)
@@ -167,6 +185,29 @@ impl DB {
         vec
     }
 
+    pub fn get_full_address_list(&self) -> Vec<String> {
+        let p2pkh  = self.get_account_address_list(AccountAddressType::P2PKH);
+        let p2shwh = self.get_account_address_list(AccountAddressType::P2SHWH);
+        let p2wkh  = self.get_account_address_list(AccountAddressType::P2WKH);
+        let full = [&p2pkh[..], &p2shwh[..], &p2wkh[..]].concat();
+        full
+    }
+    pub fn get_account_address_list(&self, addr_type: AccountAddressType) -> Vec<String> {
+        let name = match addr_type {
+            AccountAddressType::P2PKH  => P2PKH_ADDRESS_CF,
+            AccountAddressType::P2SHWH => P2SHWH_ADDRESS_CF,
+            AccountAddressType::P2WKH  => P2WKH_ADDRESS_CF,
+        };
+        let cf = self.0.cf_handle(name).unwrap();
+        let db_iterator = self.0.iterator_cf(cf, IteratorMode::Start).unwrap();
+        let mut vec = Vec::new();
+        for (key, _) in db_iterator {
+            let addr: String = serde_json::from_slice(&key).unwrap();
+            vec.push(addr);
+        }
+        vec
+    }
+
     pub fn put_external_secret_key(&mut self, key_helper: &SecretKeyHelper, sk: &SecretKey) {
         let key = serde_json::to_vec(key_helper).unwrap();
         let val = serde_json::to_vec(sk).unwrap();
@@ -193,6 +234,24 @@ impl DB {
         let val = serde_json::to_vec(pk).unwrap();
         let cf = self.0.cf_handle(INTERNAL_PUBLIC_KEY_CF).unwrap();
         self.0.put_cf(cf, key.as_slice(), val.as_slice()).unwrap();
+    }
+
+    pub fn put_address(&self, addr_type: AccountAddressType, address: String) {
+        let key = serde_json::to_vec(&address).unwrap();
+        match addr_type {
+            AccountAddressType::P2PKH => {
+                let cf = self.0.cf_handle(P2PKH_ADDRESS_CF).unwrap();
+                self.0.put_cf(cf, key.as_slice(), &[]).unwrap();
+            },
+            AccountAddressType::P2SHWH => {
+                let cf = self.0.cf_handle(P2SHWH_ADDRESS_CF).unwrap();
+                self.0.put_cf(cf, key.as_slice(), &[]).unwrap();
+            },
+            AccountAddressType::P2WKH => {
+                let cf = self.0.cf_handle(P2WKH_ADDRESS_CF).unwrap();
+                self.0.put_cf(cf, key.as_slice(), &[]).unwrap();
+            }
+        }
     }
 
     pub fn put_lock_group(&mut self, lock_id: &LockId, lock_group: &LockGroup) {

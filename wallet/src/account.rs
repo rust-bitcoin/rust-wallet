@@ -147,6 +147,8 @@ pub struct Account {
     pub external_pk_list: Vec<PublicKey>,
     pub internal_pk_list: Vec<PublicKey>,
 
+    pub btc_address_list: Vec<String>,
+
     pub utxo_list: HashMap<OutPoint, Utxo>,
     db: Arc<RwLock<DB>>,
 }
@@ -181,6 +183,8 @@ impl Account {
             internal_sk_list: Vec::new(),
             external_pk_list: Vec::new(),
             internal_pk_list: Vec::new(),
+
+            btc_address_list: Vec::new(),
 
             utxo_list: HashMap::new(),
             db,
@@ -271,12 +275,18 @@ impl Account {
 
     pub fn new_address(&mut self) -> Result<String, Box<Error>> {
         let pk = self.next_external_pk()?;
-        Ok(self.addr_from_pk(&pk))
+        let addr = self.addr_from_pk(&pk);
+        self.btc_address_list.push(addr.clone());
+        self.db.write().unwrap().put_address(self.address_type.clone(), addr.clone());
+        Ok(addr)
     }
 
     pub fn new_change_address(&mut self) -> Result<String, Box<Error>> {
         let pk = self.next_internal_pk()?;
-        Ok(self.addr_from_pk(&pk))
+        let addr = self.addr_from_pk(&pk);
+        self.btc_address_list.push(addr.clone());
+        self.db.write().unwrap().put_address(self.address_type.clone(), addr.clone());
+        Ok(addr)
     }
 }
 
@@ -319,9 +329,10 @@ mod test {
     };
     use hex;
 
-    use accountfactory::{AccountFactory, WalletConfigBuilder};
+    use walletlibrary::WalletConfigBuilder;
+    use default::WalletWithTrustedFullNode;
     use account::AccountAddressType;
-    use interface::{BlockChainIO, Wallet};
+    use interface::{BlockChainIO, WalletLibraryInterface};
 
     struct FakeBlockChainIO;
 
@@ -360,8 +371,8 @@ mod test {
             .db_path("/tmp/test_p2pkh_public_key_generation".to_string())
             .network(Network::Testnet)
             .finalize();
-        let mut af = AccountFactory::new_no_random(wc, Box::new(FakeBlockChainIO)).unwrap();
-        let account = af.get_account_mut(AccountAddressType::P2PKH);
+        let mut af = WalletWithTrustedFullNode::new_no_random(wc, Box::new(FakeBlockChainIO)).unwrap();
+        let account = af.wallet_lib.get_account_mut(AccountAddressType::P2PKH);
 
         for expected_pk in get_external_pk_vec() {
             let pk = account.next_external_pk().unwrap();
@@ -396,8 +407,8 @@ mod test {
             .db_path("/tmp/test_p2pkh_public_key_generation".to_string())
             .network(Network::Testnet)
             .finalize();
-        let mut af = AccountFactory::new_no_random(wc, Box::new(FakeBlockChainIO)).unwrap();
-        let account = af.get_account_mut(AccountAddressType::P2WKH);
+        let mut af = WalletWithTrustedFullNode::new_no_random(wc, Box::new(FakeBlockChainIO)).unwrap();
+        let account = af.wallet_lib.get_account_mut(AccountAddressType::P2WKH);
 
         for expected_pk in external_pk_vec {
             let pk = account.next_external_pk().unwrap();
