@@ -114,7 +114,7 @@ impl Wallet for ElectrumxWallet {
 
 impl ElectrumxWallet {
     pub fn new(wc: WalletConfig, mode: WalletLibraryMode) -> Result<(ElectrumxWallet, Mnemonic), WalletError> {
-        let (wallet_lib, mnemonic) = WalletLibrary::new(wc, mode).unwrap();
+        let (wallet_lib, mnemonic) = WalletLibrary::new(wc, mode)?;
         let electrumx_client = ElectrumxClient::new("127.0.0.1:60401".to_string()).unwrap();
 
         Ok((ElectrumxWallet { wallet_lib: Box::new(wallet_lib), electrumx_client }, mnemonic))
