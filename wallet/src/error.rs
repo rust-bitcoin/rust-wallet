@@ -36,28 +36,19 @@ pub enum WalletError {
     /// key derivation error
     KeyDerivation(bip32::Error),
     /// cipher error
-    SymmetricCipherError(symmetriccipher::SymmetricCipherError)
+    SymmetricCipherError(symmetriccipher::SymmetricCipherError),
+    /// has no key in db
+    HasNoWalletInDatabase,
 }
 
 impl Error for WalletError {
-    fn description(&self) -> &str {
-        match *self {
-            WalletError::Generic(ref s) => s,
-            WalletError::IO(ref err) => err.description(),
-            WalletError::KeyDerivation(ref err) => err.description(),
-            WalletError::SymmetricCipherError(ref err) => match err {
-                &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
-                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding"
-            }
-        }
-    }
-
-    fn cause(&self) -> Option<&Error> {
-        match *self {
-            WalletError::Generic(_) => None,
-            WalletError::IO(ref err) => Some(err),
-            WalletError::KeyDerivation(ref err) => Some(err),
-            WalletError::SymmetricCipherError(_) => None
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            &WalletError::Generic(_) => None,
+            &WalletError::IO(ref err) => Some(err),
+            &WalletError::KeyDerivation(ref err) => Some(err),
+            &WalletError::SymmetricCipherError(_) => None,
+            &WalletError::HasNoWalletInDatabase => None,
         }
     }
 }
@@ -72,8 +63,9 @@ impl fmt::Display for WalletError {
             WalletError::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err),
             WalletError::SymmetricCipherError(ref err) => write!(f, "Cipher error: {}", match err {
                 &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
-                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding"
-            })
+                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
+            }),
+            WalletError::HasNoWalletInDatabase => write!(f, "has no wallet in database"),
         }
     }
 }

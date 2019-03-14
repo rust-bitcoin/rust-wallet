@@ -609,7 +609,11 @@ impl WalletLibrary {
                 (master_key, mnemonic)
             },
             WalletLibraryMode::Decrypt => {
-                let randomness = db.get_bip39_randomness();
+                let randomness = if db.has_bip39_randomness() {
+                    Ok(db.get_bip39_randomness())
+                } else {
+                    Err(WalletError::HasNoWalletInDatabase)
+                }?;
                 let (master_key, mnemonic) = KeyFactory::decrypt(
                     &randomness,
                         wc.network,
