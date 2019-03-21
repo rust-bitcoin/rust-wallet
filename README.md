@@ -48,22 +48,22 @@ Generate some money to bitcoind and send to the wallet
 ```
 docker exec -ti rust-wallet_bitcoind_1 sh
 bitcoin-cli -regtest -rpcuser=user -rpcpassword=password generate 110
-walletcli newaddress
+wallet-cli newaddress
 bcrt1q3fnf5dll9cjuqxgw6l2nkez4mu6ktmn83ahd3q
 bitcoin-cli -regtest -rpcuser=user -rpcpassword=password sendtoaddress bcrt1q3fnf5dll9cjuqxgw6l2nkez4mu6ktmn83ahd3q 1
 bitcoin-cli -regtest -rpcuser=user -rpcpassword=password generate 1
-walletcli sync_with_tip
-walletcli walletbalance
+wallet-cli sync_with_tip
+wallet-cli walletbalance
 100000000
 ```
 Send money back to the bitcoind
 ```
 bitcoin-cli -regtest -rpcuser=user -rpcpassword=password getnewaddress --address_type bech32
 bcrt1qku9u0rtxy5t9uxnyp2nqt9z33ffxy6qhjlcz49
-walletcli send_coins --dest_addr bcrt1qku9u0rtxy5t9uxnyp2nqt9z33ffxy6qhjlcz49 --amt 50000000 --submit
+wallet-cli send_coins --dest_addr bcrt1qku9u0rtxy5t9uxnyp2nqt9z33ffxy6qhjlcz49 --amt 50000000 --submit
 bitcoin-cli -regtest -rpcuser=user -rpcpassword=password generate 1
-walletcli sync_with_tip
-walletcli walletbalance
+wallet-cli sync_with_tip
+wallet-cli walletbalance
 49990000
 ```
 

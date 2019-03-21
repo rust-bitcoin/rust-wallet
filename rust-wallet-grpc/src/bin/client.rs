@@ -30,7 +30,7 @@ use rust_wallet_grpc::{
 fn main() {
     let default_wallet_rpc_port_str: &str = &DEFAULT_WALLET_RPC_PORT.to_string();
 
-    let matches = App::new("walletcli")
+    let matches = App::new("wallet-cli")
         .version("1.0")
         .arg(Arg::with_name("wallet_rpc_port")
             .long("wallet_rpc_port")
