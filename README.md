@@ -23,6 +23,12 @@ git checkout e49cef1bbcaf1710613dab4578d61b99c7dbd478
 cargo install --debug --path .
 ```
 
+Launch `electrumx`:
+
+```
+electrs --network=regtest --jsonrpc-import --cookie=user:password --daemon-rpc-addr=127.0.0.1:18332
+```
+
 Install the wallet:
 ```
 git clone https://github.com/LightningPeach/rust-wallet.git
