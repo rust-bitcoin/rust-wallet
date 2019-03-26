@@ -13,18 +13,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use bitcoin::{
-    network::serialize::serialize,
+    consensus::serialize,
     blockdata::transaction::OutPoint,
-    util::hash::Sha256dHash,
 };
+use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 use protobuf::RepeatedField;
-use grpc;
 use tls_api_native_tls;
 use wallet::{
     account::{Utxo, AccountAddressType},
     walletlibrary::LockId,
     interface::Wallet as WalletInterface,
 };
+
+use log::info;
 
 use std::{
     thread,
@@ -36,8 +37,8 @@ use std::{
     },
 };
 
-use walletrpc_grpc::{Wallet, WalletServer};
-use walletrpc::{
+use super::walletrpc_grpc::{Wallet, WalletServer};
+use super::walletrpc::{
     NewAddressRequest, NewAddressResponse, NewChangeAddressRequest, NewChangeAddressResponse,
     GetUtxoListRequest, GetUtxoListResponse, SyncWithTipRequest, SyncWithTipResponse,
     MakeTxRequest, MakeTxResponse, SendCoinsRequest, SendCoinsResponse,
@@ -58,7 +59,7 @@ fn grpc_error<T: Send>(resp: Result<T, Box<Error>>) -> grpc::SingleResponse<T> {
 impl Into<RpcUtxo> for Utxo {
     fn into(self) -> RpcUtxo {
         let mut op = RpcOutPoint::new();
-        op.set_txid(self.out_point.txid.into_bytes().to_vec());
+        op.set_txid(self.out_point.txid[..].to_vec());
         op.set_vout(self.out_point.vout);
 
         let mut rpc_utxo = RpcUtxo::new();
@@ -133,10 +134,12 @@ impl WalletImpl {
     }
 
     fn make_tx_helper(&self, req: MakeTxRequest) -> Result<MakeTxResponse, Box<Error>> {
+        use bitcoin_hashes::Hash;
+
         let mut ops = Vec::new();
         for op in req.ops.into_vec() {
             ops.push(OutPoint {
-                txid: Sha256dHash::from(op.txid.as_slice()),
+                txid: Sha256dHash::from_slice(&op.txid[..]).unwrap(),
                 vout: op.vout,
             })
         }
@@ -148,7 +151,7 @@ impl WalletImpl {
             .make_tx(ops, req.dest_addr, req.amt, req.submit)?;
 
         let mut resp = MakeTxResponse::new();
-        resp.set_serialized_raw_tx(serialize(&tx)?);
+        resp.set_serialized_raw_tx(serialize(&tx));
         Ok(resp)
     }
 
@@ -162,7 +165,7 @@ impl WalletImpl {
         )?;
 
         let mut resp = SendCoinsResponse::new();
-        resp.set_serialized_raw_tx(serialize(&tx).unwrap());
+        resp.set_serialized_raw_tx(serialize(&tx));
         if req.lock_coins {
             resp.set_lock_id(lock_id.into());
         }

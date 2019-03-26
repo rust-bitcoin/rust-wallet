@@ -14,12 +14,11 @@
 // limitations under the License.
 
 use protobuf::RepeatedField;
-use grpc;
 
 use std::error::Error;
 
-use walletrpc_grpc::{Wallet, WalletClient};
-use walletrpc::{
+use super::walletrpc_grpc::{Wallet, WalletClient};
+use super::walletrpc::{
     NewAddressRequest, NewChangeAddressRequest, GetUtxoListRequest, WalletBalanceRequest,
     MakeTxRequest, SendCoinsRequest, UnlockCoinsRequest, SyncWithTipRequest, ShutdownRequest,
     AddressType as RpcAddressType, Utxo as RpcUtxo, OutPoint as RpcOutPoint,

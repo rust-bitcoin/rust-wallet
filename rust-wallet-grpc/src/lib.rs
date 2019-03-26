@@ -12,17 +12,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-extern crate wallet;
-extern crate bitcoin_core_io;
-extern crate bitcoin;
-extern crate grpc;
-extern crate protobuf;
-extern crate tls_api;
-extern crate tls_api_native_tls;
-extern crate crossbeam;
-extern crate bitcoin_rpc_client;
-#[macro_use]
-extern crate log;
 
 pub mod server;
 pub mod client;

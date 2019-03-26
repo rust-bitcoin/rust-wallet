@@ -12,15 +12,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-extern crate bitcoin;
-extern crate hex;
-extern crate log;
-extern crate simple_logger;
-extern crate clap;
-extern crate wallet;
-extern crate rust_wallet_grpc;
-extern crate bitcoin_core_io;
-extern crate bitcoin_rpc_client;
 
 use clap::{Arg, App};
 use bitcoin_rpc_client::BitcoinCoreClient;
