@@ -46,7 +46,10 @@ pub trait Wallet {
 
 pub trait WalletLibraryInterface {
     fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>>;
-    fn new_change_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>>;
+    fn new_change_address(
+        &mut self,
+        address_type: AccountAddressType,
+    ) -> Result<String, Box<Error>>;
     fn get_utxo_list(&self) -> Vec<Utxo>;
     fn wallet_balance(&self) -> u64;
     fn unlock_coins(&mut self, lock_id: LockId);

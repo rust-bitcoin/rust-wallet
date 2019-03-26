@@ -46,48 +46,63 @@ fn main() {
 
     let matches = App::new("wallet")
         .version("1.0")
-        .arg(Arg::with_name("log_level")
-            .long("log_level")
-            .help("should be one of ERROR, WARN, INFO, DEBUG, TRACE")
-            .takes_value(true)
-            .default_value("INFO"))
-        .arg(Arg::with_name("db_path")
-            .long("db_path")
-            .help("path to file with wallet data")
-            .takes_value(true)
-            .default_value(DEFAULT_DB_PATH))
-        .arg(Arg::with_name("connect")
-            .long("connect")
-            .help("address of bitcoind's rpc server")
-            .takes_value(true)
-            .default_value(DEFAULT_BITCOIND_RPC_CONNECT))
-        .arg(Arg::with_name("user")
-            .long("user")
-            .help("bitcoind's rpc user")
-            .takes_value(true)
-            .default_value(DEFAULT_BITCOIND_RPC_USER))
-        .arg(Arg::with_name("password")
-            .long("password")
-            .help("bitcoind's rpc password")
-            .takes_value(true)
-            .default_value(DEFAULT_BITCOIND_RPC_PASSWORD))
-        .arg(Arg::with_name("zmqpubrawblock")
-            .long("zmqpubrawblock")
-            .help("address of bitcoind's zmqpubrawblock endpoint")
-            .takes_value(true)
-            .default_value(DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT))
-        .arg(Arg::with_name("zmqpubrawtx")
-            .long("zmqpubrawtx")
-            .help("address of bitcoind's zmqpubrawtx endpoint")
-            .takes_value(true)
-            .default_value(DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT))
-        .arg(Arg::with_name("wallet_rpc_port")
-            .long("wallet_rpc_port")
-            .help("port of wallet's grpc server")
-            .takes_value(true)
-            .default_value(default_wallet_rpc_port_str))
-        .arg(Arg::with_name("electrumx")
-            .long("electrumx"))
+        .arg(
+            Arg::with_name("log_level")
+                .long("log_level")
+                .help("should be one of ERROR, WARN, INFO, DEBUG, TRACE")
+                .takes_value(true)
+                .default_value("INFO"),
+        )
+        .arg(
+            Arg::with_name("db_path")
+                .long("db_path")
+                .help("path to file with wallet data")
+                .takes_value(true)
+                .default_value(DEFAULT_DB_PATH),
+        )
+        .arg(
+            Arg::with_name("connect")
+                .long("connect")
+                .help("address of bitcoind's rpc server")
+                .takes_value(true)
+                .default_value(DEFAULT_BITCOIND_RPC_CONNECT),
+        )
+        .arg(
+            Arg::with_name("user")
+                .long("user")
+                .help("bitcoind's rpc user")
+                .takes_value(true)
+                .default_value(DEFAULT_BITCOIND_RPC_USER),
+        )
+        .arg(
+            Arg::with_name("password")
+                .long("password")
+                .help("bitcoind's rpc password")
+                .takes_value(true)
+                .default_value(DEFAULT_BITCOIND_RPC_PASSWORD),
+        )
+        .arg(
+            Arg::with_name("zmqpubrawblock")
+                .long("zmqpubrawblock")
+                .help("address of bitcoind's zmqpubrawblock endpoint")
+                .takes_value(true)
+                .default_value(DEFAULT_ZMQ_PUB_RAW_BLOCK_ENDPOINT),
+        )
+        .arg(
+            Arg::with_name("zmqpubrawtx")
+                .long("zmqpubrawtx")
+                .help("address of bitcoind's zmqpubrawtx endpoint")
+                .takes_value(true)
+                .default_value(DEFAULT_ZMQ_PUB_RAW_TX_ENDPOINT),
+        )
+        .arg(
+            Arg::with_name("wallet_rpc_port")
+                .long("wallet_rpc_port")
+                .help("port of wallet's grpc server")
+                .takes_value(true)
+                .default_value(default_wallet_rpc_port_str),
+        )
+        .arg(Arg::with_name("electrumx").long("electrumx"))
         .get_matches();
 
     let log_level = {
@@ -114,19 +129,30 @@ fn main() {
 
     // TODO(evg): rewrite it; add --create param; use WalletLibraryMode::Decrypt mode as well
     let wallet: Box<dyn Wallet + Send> = if matches.is_present("electrumx") {
-        let (electrumx_wallet, mnemonic) = ElectrumxWallet::new(
-            wc, WalletLibraryMode::Create(KeyGenConfig::default())).unwrap();
+        let (electrumx_wallet, mnemonic) =
+            ElectrumxWallet::new(wc, WalletLibraryMode::Create(KeyGenConfig::default())).unwrap();
         println!("{}", mnemonic.to_string());
         Box::new(electrumx_wallet)
     } else {
-        let bio = Box::new(BitcoinCoreIO::new(
-            BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password)));
+        let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            &cfg.url,
+            &cfg.user,
+            &cfg.password,
+        )));
         let (default_wallet, mnemonic) = WalletWithTrustedFullNode::new(
-            wc, bio, WalletLibraryMode::Create(KeyGenConfig::default())).unwrap();
+            wc,
+            bio,
+            WalletLibraryMode::Create(KeyGenConfig::default()),
+        )
+        .unwrap();
         println!("{}", mnemonic.to_string());
         Box::new(default_wallet)
     };
 
-    let wallet_rpc_port: u16 = matches.value_of("wallet_rpc_port").unwrap().parse().unwrap();
+    let wallet_rpc_port: u16 = matches
+        .value_of("wallet_rpc_port")
+        .unwrap()
+        .parse()
+        .unwrap();
     launch_server_new(wallet, wallet_rpc_port);
 }

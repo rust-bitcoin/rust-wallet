@@ -18,14 +18,12 @@
 //! Modules of this library use this error class to indicate problems.
 //!
 
-
 use std::convert;
 use std::error::Error;
 use std::fmt;
 use std::io;
 use bitcoin::util::bip32;
 use crypto::symmetriccipher;
-
 
 /// An error class to offer a unified error interface upstream
 pub enum WalletError {
@@ -61,10 +59,14 @@ impl fmt::Display for WalletError {
             WalletError::Generic(ref s) => write!(f, "Generic: {}", s),
             WalletError::IO(ref err) => write!(f, "IO error: {}", err),
             WalletError::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err),
-            WalletError::SymmetricCipherError(ref err) => write!(f, "Cipher error: {}", match err {
-                &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
-                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
-            }),
+            WalletError::SymmetricCipherError(ref err) => write!(
+                f,
+                "Cipher error: {}",
+                match err {
+                    &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
+                    &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
+                }
+            ),
             WalletError::HasNoWalletInDatabase => write!(f, "has no wallet in database"),
         }
     }
@@ -80,7 +82,7 @@ impl convert::From<WalletError> for io::Error {
     fn from(err: WalletError) -> io::Error {
         match err {
             WalletError::IO(e) => e,
-            _ => io::Error::new(io::ErrorKind::Other, err.description())
+            _ => io::Error::new(io::ErrorKind::Other, err.description()),
         }
     }
 }

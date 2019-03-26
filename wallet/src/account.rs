@@ -52,10 +52,10 @@ impl<'a> From<&'a str> for AccountAddressType {
     fn from(addr_type: &'a str) -> AccountAddressType {
         // let addr_type_str: &str = &addr_type;
         match addr_type {
-            "p2pkh"  => AccountAddressType::P2PKH,
+            "p2pkh" => AccountAddressType::P2PKH,
             "p2shwh" => AccountAddressType::P2SHWH,
-            "p2wkh"  => AccountAddressType::P2WKH,
-            _        => unreachable!(),
+            "p2wkh" => AccountAddressType::P2WKH,
+            _ => unreachable!(),
         }
     }
 }
@@ -63,9 +63,9 @@ impl<'a> From<&'a str> for AccountAddressType {
 impl From<AccountAddressType> for usize {
     fn from(val: AccountAddressType) -> usize {
         match val {
-            AccountAddressType::P2PKH  => 0,
+            AccountAddressType::P2PKH => 0,
             AccountAddressType::P2SHWH => 1,
-            AccountAddressType::P2WKH  => 2,
+            AccountAddressType::P2WKH => 2,
         }
     }
 }
@@ -131,7 +131,14 @@ pub struct Utxo {
 }
 
 impl Utxo {
-    pub fn new(value: u64, key_path: KeyPath, out_point: OutPoint, account_index: u32, pk_script: Script, addr_type: AccountAddressType) -> Self {
+    pub fn new(
+        value: u64,
+        key_path: KeyPath,
+        out_point: OutPoint,
+        account_index: u32,
+        pk_script: Script,
+        addr_type: AccountAddressType,
+    ) -> Self {
         Self {
             value,
             key_path,
@@ -178,7 +185,12 @@ impl SecretKeyHelper {
 }
 
 impl Account {
-    pub fn new (account_key: ExtendedPrivKey, address_type: AccountAddressType, network: Network, db: Arc<RwLock<DB>>) -> Account {
+    pub fn new(
+        account_key: ExtendedPrivKey,
+        address_type: AccountAddressType,
+        network: Network,
+        db: Arc<RwLock<DB>>,
+    ) -> Account {
         Account {
             account_key,
             address_type,
@@ -198,10 +210,17 @@ impl Account {
 
     pub fn get_sk(&self, key_path: &KeyPath) -> SecretKey {
         let path: &[ChildNumber] = &[
-            ChildNumber::Normal{index: key_path.addr_chain.clone().into()}, // TODO(evg): use addr chain enum instead?
-            ChildNumber::Normal{index: key_path.addr_index},
+            ChildNumber::Normal {
+                index: key_path.addr_chain.clone().into(),
+            }, // TODO(evg): use addr chain enum instead?
+            ChildNumber::Normal {
+                index: key_path.addr_index,
+            },
         ];
-        let extended_priv_key = self.account_key.derive_priv(&Secp256k1::new(),path).unwrap();
+        let extended_priv_key = self
+            .account_key
+            .derive_priv(&Secp256k1::new(), path)
+            .unwrap();
         extended_priv_key.secret_key
     }
 
@@ -216,18 +235,26 @@ impl Account {
 
     pub fn next_external_pk(&mut self) -> Result<PublicKey, Box<Error>> {
         let path: &[ChildNumber] = &[
-            ChildNumber::Normal{index: 0}, // TODO(evg): use addr chain enum instead?
-            ChildNumber::Normal{index: self.external_index},
+            ChildNumber::Normal { index: 0 }, // TODO(evg): use addr chain enum instead?
+            ChildNumber::Normal {
+                index: self.external_index,
+            },
         ];
-        let extended_priv_key = self.account_key.derive_priv(&Secp256k1::new(),path)?;
+        let extended_priv_key = self.account_key.derive_priv(&Secp256k1::new(), path)?;
 
         let extended_pub_key = ExtendedPubKey::from_private(&Secp256k1::new(), &extended_priv_key);
         self.external_pk_list.push(extended_pub_key.public_key);
 
         // DB BEGIN
         let key = SecretKeyHelper::new(
-            self.address_type.clone(), AddressChain::External, self.external_index);
-        self.db.write().unwrap().put_external_public_key(&key, &extended_pub_key.public_key);
+            self.address_type.clone(),
+            AddressChain::External,
+            self.external_index,
+        );
+        self.db
+            .write()
+            .unwrap()
+            .put_external_public_key(&key, &extended_pub_key.public_key);
         // DB END
 
         self.external_index += 1;
@@ -236,8 +263,10 @@ impl Account {
 
     pub fn next_internal_pk(&mut self) -> Result<PublicKey, Box<Error>> {
         let path: &[ChildNumber] = &[
-            ChildNumber::Normal{index: 1},
-            ChildNumber::Normal{index: self.internal_index},
+            ChildNumber::Normal { index: 1 },
+            ChildNumber::Normal {
+                index: self.internal_index,
+            },
         ];
         self.internal_index += 1;
         let extended_priv_key = self.account_key.derive_priv(&Secp256k1::new(), path)?;
@@ -247,8 +276,14 @@ impl Account {
 
         // DB BEGIN
         let key = SecretKeyHelper::new(
-            self.address_type.clone(), AddressChain::Internal, self.internal_index);
-        self.db.write().unwrap().put_internal_public_key(&key, &extended_pub_key.public_key);
+            self.address_type.clone(),
+            AddressChain::Internal,
+            self.internal_index,
+        );
+        self.db
+            .write()
+            .unwrap()
+            .put_internal_public_key(&key, &extended_pub_key.public_key);
         // DB END
 
         Ok(extended_pub_key.public_key)
@@ -256,17 +291,17 @@ impl Account {
 
     pub fn addr_from_pk(&self, pk: &PublicKey) -> String {
         match self.address_type {
-            AccountAddressType::P2PKH  => p2pkh_addr_from_public_key(pk, self.network),
+            AccountAddressType::P2PKH => p2pkh_addr_from_public_key(pk, self.network),
             AccountAddressType::P2SHWH => p2shwh_addr_from_public_key(pk, self.network),
-            AccountAddressType::P2WKH  => p2wkh_addr_from_public_key_bip0173(pk, self.network),
+            AccountAddressType::P2WKH => p2wkh_addr_from_public_key_bip0173(pk, self.network),
         }
     }
 
     pub fn script_from_pk(&self, pk: &PublicKey) -> Script {
         match self.address_type {
-            AccountAddressType::P2PKH  => p2pkh_script_from_public_key(pk, self.network),
+            AccountAddressType::P2PKH => p2pkh_script_from_public_key(pk, self.network),
             AccountAddressType::P2SHWH => p2shwh_script_from_public_key(pk, self.network),
-            AccountAddressType::P2WKH  => p2wkh_script_from_public_key(pk, self.network),
+            AccountAddressType::P2WKH => p2wkh_script_from_public_key(pk, self.network),
         }
     }
 
@@ -274,7 +309,10 @@ impl Account {
         let pk = self.next_external_pk()?;
         let addr = self.addr_from_pk(&pk);
         self.btc_address_list.push(addr.clone());
-        self.db.write().unwrap().put_address(self.address_type.clone(), addr.clone());
+        self.db
+            .write()
+            .unwrap()
+            .put_address(self.address_type.clone(), addr.clone());
         Ok(addr)
     }
 
@@ -282,7 +320,10 @@ impl Account {
         let pk = self.next_internal_pk()?;
         let addr = self.addr_from_pk(&pk);
         self.btc_address_list.push(addr.clone());
-        self.db.write().unwrap().put_address(self.address_type.clone(), addr.clone());
+        self.db
+            .write()
+            .unwrap()
+            .put_address(self.address_type.clone(), addr.clone());
         Ok(addr)
     }
 }
@@ -293,7 +334,7 @@ pub fn p2pkh_addr_from_public_key(pk: &PublicKey, network: Network) -> String {
 }
 
 pub fn p2shwh_addr_from_public_key(pk: &PublicKey, network: Network) -> String {
-    let addr = Address::p2shwpkh(pk,network);
+    let addr = Address::p2shwpkh(pk, network);
     addr.to_string()
 }
 
@@ -303,17 +344,17 @@ pub fn p2wkh_addr_from_public_key_bip0173(pk: &PublicKey, network: Network) -> S
 }
 
 pub fn p2pkh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
-    let p2pkh_addr = Address::p2pkh(pk,network);
+    let p2pkh_addr = Address::p2pkh(pk, network);
     p2pkh_addr.script_pubkey()
 }
 
 pub fn p2shwh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
-    let addr = Address::p2shwpkh(pk,network);
+    let addr = Address::p2shwpkh(pk, network);
     addr.script_pubkey()
 }
 
 pub fn p2wkh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
-    let p2wkh_addr = Address::p2wpkh(pk,network);
+    let p2wkh_addr = Address::p2wpkh(pk, network);
     p2wkh_addr.script_pubkey()
 }
 
@@ -323,7 +364,7 @@ mod test {
         network::constants::Network,
         util::hash::Sha256dHash,
         Block, Transaction,
-    };
+};
     use hex;
 
     use walletlibrary::{WalletConfigBuilder, WalletLibraryMode, KeyGenConfig};
@@ -334,13 +375,21 @@ mod test {
     struct FakeBlockChainIO;
 
     impl BlockChainIO for FakeBlockChainIO {
-        fn get_block_count(&self) -> u32 { unimplemented!() }
+        fn get_block_count(&self) -> u32 {
+            unimplemented!()
+        }
         #[allow(unused_variables)]
-        fn get_block_hash(&self, height: u32) -> Sha256dHash { unimplemented!() }
+        fn get_block_hash(&self, height: u32) -> Sha256dHash {
+            unimplemented!()
+        }
         #[allow(unused_variables)]
-        fn get_block(&self, header_hash: &Sha256dHash) -> Block { unimplemented!() }
+        fn get_block(&self, header_hash: &Sha256dHash) -> Block {
+            unimplemented!()
+        }
         #[allow(unused_variables)]
-        fn send_raw_transaction(&self, tx: &Transaction) { unimplemented!() }
+        fn send_raw_transaction(&self, tx: &Transaction) {
+            unimplemented!()
+        }
     }
 
     #[test]
@@ -368,7 +417,12 @@ mod test {
             .db_path("/tmp/test_p2pkh_public_key_generation".to_string())
             .network(Network::Testnet)
             .finalize();
-        let (mut af, _) = WalletWithTrustedFullNode::new(wc, Box::new(FakeBlockChainIO), WalletLibraryMode::Create(KeyGenConfig::debug())).unwrap();
+        let (mut af, _) = WalletWithTrustedFullNode::new(
+            wc,
+            Box::new(FakeBlockChainIO),
+            WalletLibraryMode::Create(KeyGenConfig::debug()),
+        )
+        .unwrap();
         let account = af.wallet_lib.get_account_mut(AccountAddressType::P2PKH);
 
         for expected_pk in get_external_pk_vec() {
@@ -405,7 +459,11 @@ mod test {
             .network(Network::Testnet)
             .finalize();
         let (mut af, _) = WalletWithTrustedFullNode::new(
-            wc, Box::new(FakeBlockChainIO), WalletLibraryMode::Create(KeyGenConfig::debug())).unwrap();
+            wc,
+            Box::new(FakeBlockChainIO),
+            WalletLibraryMode::Create(KeyGenConfig::debug()),
+        )
+        .unwrap();
         let account = af.wallet_lib.get_account_mut(AccountAddressType::P2WKH);
 
         for expected_pk in external_pk_vec {

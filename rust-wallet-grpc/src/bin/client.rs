@@ -79,7 +79,11 @@ fn main() {
             .about("shutdown the wallet server"))
         .get_matches();
 
-    let wallet_rpc_port: u16 = matches.value_of("wallet_rpc_port").unwrap().parse().unwrap();
+    let wallet_rpc_port: u16 = matches
+        .value_of("wallet_rpc_port")
+        .unwrap()
+        .parse()
+        .unwrap();
     let client = WalletClientWrapper::new(wallet_rpc_port);
 
     if let Some(matches) = matches.subcommand_matches("newaddress") {
@@ -109,7 +113,9 @@ fn main() {
         let amt: u64 = matches.value_of("amt").unwrap().parse().unwrap();
         let submit = matches.is_present("submit");
         let lock_coins = matches.is_present("lock_coins");
-        client.send_coins(dest_addr.to_string(), amt, submit, lock_coins).unwrap();
+        client
+            .send_coins(dest_addr.to_string(), amt, submit, lock_coins)
+            .unwrap();
     }
 
     if let Some(matches) = matches.subcommand_matches("unlock_coins") {

@@ -60,15 +60,21 @@ pub static DEFAULT_DB_PATH: &'static str = "rocks.db";
 
 #[derive(Clone)]
 pub struct BitcoindConfig {
-    pub url:      String,
-    pub user:     String,
+    pub url: String,
+    pub user: String,
     pub password: String,
     pub zmq_pub_raw_block: String,
-    zmq_pub_raw_tx:    String,
+    zmq_pub_raw_tx: String,
 }
 
 impl BitcoindConfig {
-    pub fn new(url: String, user: String, password: String, zmq_pub_raw_block: String, zmq_pub_raw_tx: String) -> Self {
+    pub fn new(
+        url: String,
+        user: String,
+        password: String,
+        zmq_pub_raw_block: String,
+        zmq_pub_raw_tx: String,
+    ) -> Self {
         Self {
             url,
             user,
@@ -144,7 +150,7 @@ pub struct WalletConfig {
     network: Network,
     passphrase: String,
     salt: String,
-    db_path: String
+    db_path: String,
 }
 
 impl WalletConfig {
@@ -251,13 +257,21 @@ impl WalletLibraryInterface for WalletLibrary {
         self.get_account_mut(address_type).new_address()
     }
 
-    fn new_change_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>> {
+    fn new_change_address(
+        &mut self,
+        address_type: AccountAddressType,
+    ) -> Result<String, Box<Error>> {
         self.get_account_mut(address_type).new_change_address()
     }
 
     fn get_utxo_list(&self) -> Vec<Utxo> {
         let mut joined = Vec::new();
-        for account in &[&self.p2pkh_account, &self.p2shwh_account, &self.p2wkh_account] {
+        let accounts = [
+            &self.p2pkh_account,
+            &self.p2shwh_account,
+            &self.p2wkh_account,
+        ];
+        for account in &accounts {
             let account_utxo_list = &account.get_utxo_list();
             for (_, val) in *account_utxo_list {
                 joined.push(val.clone());
@@ -280,19 +294,25 @@ impl WalletLibraryInterface for WalletLibrary {
         self.locked_coins.unlock_group(lock_id);
     }
 
-    fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool) -> Result<(Transaction, LockId), Box<Error>> {
+    fn send_coins(
+        &mut self,
+        addr_str: String,
+        amt: u64,
+        lock_coins: bool,
+        witness_only: bool,
+    ) -> Result<(Transaction, LockId), Box<Error>> {
         let utxo_list = self.get_utxo_list();
 
         let mut total = 0;
         let mut subset = Vec::new();
         for utxo in utxo_list {
             if self.locked_coins.is_locked(&utxo.out_point) {
-                continue
+                continue;
             }
 
             if witness_only {
                 if utxo.addr_type != AccountAddressType::P2WKH {
-                    continue
+                    continue;
                 }
             }
 
@@ -300,16 +320,20 @@ impl WalletLibraryInterface for WalletLibrary {
             subset.push(utxo.out_point);
 
             if total >= amt + 10000 {
-                break
+                break;
             }
         }
 
         let tx = self.make_tx(subset.clone(), addr_str, amt)?;
         if lock_coins {
             let lock_group = LockGroup(subset);
-            self.locked_coins.lock_group(self.next_lock_id.clone(), lock_group.clone());
+            self.locked_coins
+                .lock_group(self.next_lock_id.clone(), lock_group.clone());
 
-            self.db.write().unwrap().put_lock_group(&self.next_lock_id, &lock_group);
+            self.db
+                .write()
+                .unwrap()
+                .put_lock_group(&self.next_lock_id, &lock_group);
 
             let rez = self.next_lock_id.clone();
             self.next_lock_id.incr();
@@ -320,14 +344,19 @@ impl WalletLibraryInterface for WalletLibrary {
     }
 
     // TODO(evg): add version, lock_time param?
-    fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64) -> Result<Transaction, Box<Error>> {
+    fn make_tx(
+        &mut self,
+        ops: Vec<OutPoint>,
+        addr_str: String,
+        amt: u64,
+    ) -> Result<Transaction, Box<Error>> {
         let addr: Address = Address::from_str(&addr_str).unwrap();
 
         let mut tx = Transaction {
-            version:   0,
+            version: 0,
             lock_time: 0,
-            input:     Vec::new(),
-            output:    Vec::new(),
+            input: Vec::new(),
+            output: Vec::new(),
         };
 
         let mut total = 0;
@@ -335,11 +364,11 @@ impl WalletLibraryInterface for WalletLibrary {
             let utxo = self.op_to_utxo.get(op).unwrap();
             total += utxo.value;
 
-            let input = TxIn{
+            let input = TxIn {
                 previous_output: *op,
-                script_sig:      Script::new(),
-                sequence:        0xFFFFFFFF,
-                witness:         Vec::new(),
+                script_sig: Script::new(),
+                sequence: 0xFFFFFFFF,
+                witness: Vec::new(),
             };
             tx.input.push(input);
         }
@@ -349,18 +378,21 @@ impl WalletLibraryInterface for WalletLibrary {
         }
 
         // dest output
-        let output = TxOut{
+        let output = TxOut {
             value: amt,
             script_pubkey: addr.script_pubkey(),
         };
         tx.output.push(output);
 
         let change_addr = {
-            let change_addr = self.get_account_mut(AccountAddressType::P2WKH).new_change_address().unwrap();
+            let change_addr = self
+                .get_account_mut(AccountAddressType::P2WKH)
+                .new_change_address()
+                .unwrap();
             Address::from_str(&change_addr).unwrap()
         };
 
-        let change_output = TxOut{
+        let change_output = TxOut {
             value: total - amt - 10_000, // subtract fee
             script_pubkey: change_addr.script_pubkey(),
         };
@@ -395,22 +427,18 @@ impl WalletLibraryInterface for WalletLibrary {
                         .push_slice(&pk.serialize())
                         .into_script();
                     tx.input[i].script_sig = script;
-                },
+                }
                 AccountAddressType::P2SHWH => {
                     let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
                     let pk_script_p2wpkh = Address::p2wpkh(&pk, Network::Bitcoin).script_pubkey();
 
-                    let tx_sig_hash = bip143::SighashComponents::new(&tx).
-                        sighash_all(
-                            &tx.input[i],
-                            &pk_script,
-                            utxo.value,
-                        );
-
-                    let signature = ctx.sign(
-                        &Message::from(tx_sig_hash.into_bytes()),
-                        &sk,
+                    let tx_sig_hash = bip143::SighashComponents::new(&tx).sighash_all(
+                        &tx.input[i],
+                        &pk_script,
+                        utxo.value,
                     );
+
+                    let signature = ctx.sign(&Message::from(tx_sig_hash.into_bytes()), &sk);
 
                     let mut serialized_sig = signature.serialize_der(&ctx);
                     serialized_sig.push(0x1);
@@ -421,21 +449,17 @@ impl WalletLibraryInterface for WalletLibrary {
                     tx.input[i].script_sig = Builder::new()
                         .push_slice(pk_script_p2wpkh.as_bytes())
                         .into_script();
-                },
+                }
                 AccountAddressType::P2WKH => {
                     let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
 
-                    let tx_sig_hash = bip143::SighashComponents::new(&tx).
-                        sighash_all(
-                            &tx.input[i],
-                            &pk_script,
-                            utxo.value,
-                        );
-
-                    let signature = ctx.sign(
-                        &Message::from(tx_sig_hash.into_bytes()),
-                        &sk,
+                    let tx_sig_hash = bip143::SighashComponents::new(&tx).sighash_all(
+                        &tx.input[i],
+                        &pk_script,
+                        utxo.value,
                     );
+
+                    let signature = ctx.sign(&Message::from(tx_sig_hash.into_bytes()), &sk);
 
                     let mut serialized_sig = signature.serialize_der(&ctx);
                     serialized_sig.push(0x1);
@@ -458,14 +482,17 @@ impl WalletLibraryInterface for WalletLibrary {
     }
 
     fn update_last_seen_block_height_in_db(&mut self, block_height: usize) {
-        self.db.write().unwrap().put_last_seen_block_height(block_height as u32);
+        self.db
+            .write()
+            .unwrap()
+            .put_last_seen_block_height(block_height as u32);
     }
 
     fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
         match address_type {
-            AccountAddressType::P2PKH  => &mut self.p2pkh_account,
+            AccountAddressType::P2PKH => &mut self.p2pkh_account,
             AccountAddressType::P2SHWH => &mut self.p2shwh_account,
-            AccountAddressType::P2WKH  => &mut self.p2wkh_account,
+            AccountAddressType::P2WKH => &mut self.p2wkh_account,
         }
     }
 
@@ -474,7 +501,8 @@ impl WalletLibraryInterface for WalletLibrary {
             self.p2pkh_account.btc_address_list.clone(),
             self.p2shwh_account.btc_address_list.clone(),
             self.p2wkh_account.btc_address_list.clone(),
-        ].concat()
+        ]
+        .concat()
     }
 
     fn process_tx(&mut self, tx: &Transaction) {
@@ -526,7 +554,9 @@ impl WalletLibraryInterface for WalletLibrary {
                     vout: output_index as u32,
                 };
 
-                if output.script_pubkey.is_p2pkh() && account.address_type == AccountAddressType::P2PKH {
+                if output.script_pubkey.is_p2pkh()
+                    && account.address_type == AccountAddressType::P2PKH
+                {
                     // TODO(evg): use correct index
                     for pk_index in 0..joined.len() {
                         let pk = &joined[pk_index];
@@ -536,8 +566,14 @@ impl WalletLibraryInterface for WalletLibrary {
                             let cache = get_pk_index(pk_index);
                             let key_path = KeyPath::new(cache.1, cache.0 as u32);
 
-                            let utxo = Utxo::new(output.value, key_path, op,
-                                                 account_index as u32, script, AccountAddressType::P2PKH);
+                            let utxo = Utxo::new(
+                                output.value,
+                                key_path,
+                                op,
+                                account_index as u32,
+                                script,
+                                AccountAddressType::P2PKH,
+                            );
 
                             account.grab_utxo(utxo.clone());
                             self.op_to_utxo.insert(op, utxo);
@@ -545,7 +581,9 @@ impl WalletLibraryInterface for WalletLibrary {
                     }
                 }
 
-                if output.script_pubkey.is_p2sh() && account.address_type == AccountAddressType::P2SHWH {
+                if output.script_pubkey.is_p2sh()
+                    && account.address_type == AccountAddressType::P2SHWH
+                {
                     for pk_index in 0..joined.len() {
                         let pk = &joined[pk_index];
                         let script = account.script_from_pk(pk);
@@ -554,8 +592,14 @@ impl WalletLibraryInterface for WalletLibrary {
                             let cache = get_pk_index(pk_index);
                             let key_path = KeyPath::new(cache.1, cache.0 as u32);
 
-                            let utxo = Utxo::new(output.value, key_path, op,
-                                                 account_index as u32, script, AccountAddressType::P2SHWH);
+                            let utxo = Utxo::new(
+                                output.value,
+                                key_path,
+                                op,
+                                account_index as u32,
+                                script,
+                                AccountAddressType::P2SHWH,
+                            );
 
                             account.grab_utxo(utxo.clone());
                             self.op_to_utxo.insert(op, utxo);
@@ -563,7 +607,9 @@ impl WalletLibraryInterface for WalletLibrary {
                     }
                 }
 
-                if output.script_pubkey.is_v0_p2wpkh() && account.address_type == AccountAddressType::P2WKH {
+                if output.script_pubkey.is_v0_p2wpkh()
+                    && account.address_type == AccountAddressType::P2WKH
+                {
                     for pk_index in 0..joined.len() {
                         let pk = &joined[pk_index];
                         let script = account.script_from_pk(pk);
@@ -572,8 +618,14 @@ impl WalletLibraryInterface for WalletLibrary {
                             let cache = get_pk_index(pk_index);
                             let key_path = KeyPath::new(cache.1, cache.0 as u32);
 
-                            let utxo = Utxo::new(output.value, key_path, op,
-                                                 account_index as u32, script, AccountAddressType::P2WKH);
+                            let utxo = Utxo::new(
+                                output.value,
+                                key_path,
+                                op,
+                                account_index as u32,
+                                script,
+                                AccountAddressType::P2WKH,
+                            );
 
                             account.grab_utxo(utxo.clone());
                             self.op_to_utxo.insert(op, utxo);
@@ -592,44 +644,40 @@ pub enum WalletLibraryMode {
 }
 
 impl WalletLibrary {
-    pub fn new(wc: WalletConfig, mode: WalletLibraryMode) -> Result<(WalletLibrary, Mnemonic), WalletError> {
+    pub fn new(
+        wc: WalletConfig,
+        mode: WalletLibraryMode,
+    ) -> Result<(WalletLibrary, Mnemonic), WalletError> {
         let db = DB::new(wc.db_path);
         let last_seen_block_height = db.get_last_seen_block_height();
         let op_to_utxo = db.get_utxo_map();
         let (master_key, mnemonic) = match mode {
             WalletLibraryMode::Create(key_gen_cfg) => {
                 let (master_key, mnemonic, encrypted) = KeyFactory::new_master_private_key(
-                        key_gen_cfg.entropy,
-                        wc.network,
-                        &wc.passphrase,
-                        &wc.salt,
-                        key_gen_cfg.debug,
-                    )?;
+                    key_gen_cfg.entropy,
+                    wc.network,
+                    &wc.passphrase,
+                    &wc.salt,
+                    key_gen_cfg.debug,
+                )?;
                 db.put_bip39_randomness(&encrypted);
                 (master_key, mnemonic)
-            },
+            }
             WalletLibraryMode::Decrypt => {
                 let randomness = if db.has_bip39_randomness() {
                     Ok(db.get_bip39_randomness())
                 } else {
                     Err(WalletError::HasNoWalletInDatabase)
                 }?;
-                let (master_key, mnemonic) = KeyFactory::decrypt(
-                    &randomness,
-                        wc.network,
-                        &wc.passphrase,
-                        &wc.salt,
-                    )?;
+                let (master_key, mnemonic) =
+                    KeyFactory::decrypt(&randomness, wc.network, &wc.passphrase, &wc.salt)?;
                 (master_key, mnemonic)
-            },
+            }
             WalletLibraryMode::RecoverFromMnemonic(mnemonic) => {
                 let encrypted = mnemonic.restore(&wc.passphrase)?;
                 db.put_bip39_randomness(&encrypted);
-                let master_key = KeyFactory::recover_from_mnemonic(
-                    &mnemonic,
-                    wc.network,
-                    &wc.salt
-                )?;
+                let master_key =
+                    KeyFactory::recover_from_mnemonic(&mnemonic, wc.network, &wc.salt)?;
                 (master_key, mnemonic)
             }
         };
@@ -672,57 +720,87 @@ impl WalletLibrary {
             db,
         };
 
-//        let mut ac = AccountFactory{
-//            wallet_lib,
-//            bio,
-//        };
+        //        let mut ac = AccountFactory{
+        //            wallet_lib,
+        //            bio,
+        //        };
         let op_to_utxo = wallet_lib.op_to_utxo.clone();
         for (_, val) in &op_to_utxo {
-            wallet_lib.get_account_mut(val.addr_type.clone()).utxo_list.insert(val.out_point, val.clone());
+            wallet_lib
+                .get_account_mut(val.addr_type.clone())
+                .utxo_list
+                .insert(val.out_point, val.clone());
         }
 
         let external_public_key_list = wallet_lib.db.read().unwrap().get_external_public_key_list();
         for (key_helper, pk) in external_public_key_list {
-            wallet_lib.get_account_mut(key_helper.addr_type.clone()).external_pk_list.push(pk);
+            wallet_lib
+                .get_account_mut(key_helper.addr_type.clone())
+                .external_pk_list
+                .push(pk);
         }
 
         let internal_public_key_list = wallet_lib.db.read().unwrap().get_internal_public_key_list();
         for (key_helper, pk) in internal_public_key_list {
-            wallet_lib.get_account_mut(key_helper.addr_type.clone()).internal_pk_list.push(pk);
+            wallet_lib
+                .get_account_mut(key_helper.addr_type.clone())
+                .internal_pk_list
+                .push(pk);
         }
 
-        let p2pkh_addr_list = wallet_lib.db.read().unwrap().get_account_address_list(AccountAddressType::P2PKH);
+        let p2pkh_addr_list = wallet_lib
+            .db
+            .read()
+            .unwrap()
+            .get_account_address_list(AccountAddressType::P2PKH);
         for addr in p2pkh_addr_list {
-            wallet_lib.get_account_mut(AccountAddressType::P2PKH).btc_address_list.push(addr);
+            wallet_lib
+                .get_account_mut(AccountAddressType::P2PKH)
+                .btc_address_list
+                .push(addr);
         }
-        let p2shwh_addr_list = wallet_lib.db.read().unwrap().get_account_address_list(AccountAddressType::P2SHWH);
+        let p2shwh_addr_list = wallet_lib
+            .db
+            .read()
+            .unwrap()
+            .get_account_address_list(AccountAddressType::P2SHWH);
         for addr in p2shwh_addr_list {
-            wallet_lib.get_account_mut(AccountAddressType::P2SHWH).btc_address_list.push(addr);
+            wallet_lib
+                .get_account_mut(AccountAddressType::P2SHWH)
+                .btc_address_list
+                .push(addr);
         }
-        let p2wkh_addr_list = wallet_lib.db.read().unwrap().get_account_address_list(AccountAddressType::P2WKH);
+        let p2wkh_addr_list = wallet_lib
+            .db
+            .read()
+            .unwrap()
+            .get_account_address_list(AccountAddressType::P2WKH);
         for addr in p2wkh_addr_list {
-            wallet_lib.get_account_mut(AccountAddressType::P2WKH).btc_address_list.push(addr);
+            wallet_lib
+                .get_account_mut(AccountAddressType::P2WKH)
+                .btc_address_list
+                .push(addr);
         }
         Ok((wallet_lib, mnemonic))
     }
 
     /// get a copy of the master private key
-    pub fn master_private (&self) -> ExtendedPrivKey {
+    pub fn master_private(&self) -> ExtendedPrivKey {
         self.master_key.clone()
     }
 
     /// get a copy of the master public key
-    pub fn master_public (&self) -> ExtendedPubKey {
+    pub fn master_public(&self) -> ExtendedPubKey {
         KeyFactory::extended_public_from_private(&self.master_key)
     }
 
-//    pub fn mnemonic (&self) -> String {
-//        self.mnemonic.to_string()
-//    }
-//
-//    pub fn encrypted (&self) -> Vec<u8> {
-//        self.encrypted.clone()
-//    }
+    //    pub fn mnemonic (&self) -> String {
+    //        self.mnemonic.to_string()
+    //    }
+    //
+    //    pub fn encrypted (&self) -> Vec<u8> {
+    //        self.encrypted.clone()
+    //    }
 
     /// get an account
     pub fn extract_account_key(
@@ -730,30 +808,37 @@ impl WalletLibrary {
         account_number: u32,
         address_type: AccountAddressType,
     ) -> Result<ExtendedPrivKey, WalletError> {
-
         let mut key = match address_type {
-            AccountAddressType::P2PKH  => KeyFactory::private_child(
-                &master_key,
-                ChildNumber::Hardened{index: 44},
-            )?,
-            AccountAddressType::P2SHWH => KeyFactory::private_child(
-                &master_key,
-                ChildNumber::Hardened{index: 49},
-            )?,
-            AccountAddressType::P2WKH  => KeyFactory::private_child(
-                &master_key,
-                ChildNumber::Hardened{index: 84},
-            )?,
+            AccountAddressType::P2PKH => {
+                KeyFactory::private_child(&master_key, ChildNumber::Hardened { index: 44 })?
+            }
+            AccountAddressType::P2SHWH => {
+                KeyFactory::private_child(&master_key, ChildNumber::Hardened { index: 49 })?
+            }
+            AccountAddressType::P2WKH => {
+                KeyFactory::private_child(&master_key, ChildNumber::Hardened { index: 84 })?
+            }
         };
 
         key = match key.network {
-            Network::Bitcoin => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 0})?,
-            Network::Testnet => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 1})?,
+            Network::Bitcoin => {
+                KeyFactory::private_child(&key, ChildNumber::Hardened { index: 0 })?
+            }
+            Network::Testnet => {
+                KeyFactory::private_child(&key, ChildNumber::Hardened { index: 1 })?
+            }
             // TODO(evg): `ChildNumber::Hardened{index: 2}` is it correct?
-            Network::Regtest => KeyFactory::private_child(&key, ChildNumber::Hardened{index: 2})?,
+            Network::Regtest => {
+                KeyFactory::private_child(&key, ChildNumber::Hardened { index: 2 })?
+            }
         };
 
-        key = KeyFactory::private_child(&key, ChildNumber::Hardened{index: account_number})?;
+        key = KeyFactory::private_child(
+            &key,
+            ChildNumber::Hardened {
+                index: account_number,
+            },
+        )?;
 
         Ok(key)
     }
@@ -765,25 +850,18 @@ impl WalletLibrary {
         network: Network,
         db: Arc<RwLock<DB>>,
     ) -> Account {
-        let key = WalletLibrary::extract_account_key(
-            master_key,
-            account_number,
-            address_type.clone(),
-        ).unwrap();
+        let key =
+            WalletLibrary::extract_account_key(master_key, account_number, address_type.clone())
+                .unwrap();
 
-        Account::new(
-            key,
-            address_type,
-            network,
-            Arc::clone(&db),
-        )
+        Account::new(key, address_type, network, Arc::clone(&db))
     }
 
     fn get_account(&self, address_type: AccountAddressType) -> &Account {
         match address_type {
-            AccountAddressType::P2PKH  => &self.p2pkh_account,
+            AccountAddressType::P2PKH => &self.p2pkh_account,
             AccountAddressType::P2SHWH => &self.p2shwh_account,
-            AccountAddressType::P2WKH  => &self.p2wkh_account,
+            AccountAddressType::P2WKH => &self.p2wkh_account,
         }
     }
 }

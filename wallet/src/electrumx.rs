@@ -50,15 +50,30 @@ impl Wallet for ElectrumxWallet {
         self.electrumx_client = ElectrumxClient::new("127.0.0.1:60401".to_string()).unwrap();
     }
 
-    fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool, submit: bool) -> Result<(Transaction, LockId), Box<Error>> {
-        let (tx, lock_id) = self.wallet_lib.send_coins(addr_str, amt, lock_coins, witness_only)?;
+    fn send_coins(
+        &mut self,
+        addr_str: String,
+        amt: u64,
+        lock_coins: bool,
+        witness_only: bool,
+        submit: bool,
+    ) -> Result<(Transaction, LockId), Box<Error>> {
+        let (tx, lock_id) = self
+            .wallet_lib
+            .send_coins(addr_str, amt, lock_coins, witness_only)?;
         if submit {
             self.publish_tx(&tx);
         }
         Ok((tx, lock_id))
     }
 
-    fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64, submit: bool) -> Result<Transaction, Box<Error>> {
+    fn make_tx(
+        &mut self,
+        ops: Vec<OutPoint>,
+        addr_str: String,
+        amt: u64,
+        submit: bool,
+    ) -> Result<Transaction, Box<Error>> {
         let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
         if submit {
             self.publish_tx(&tx);
@@ -99,7 +114,10 @@ impl Wallet for ElectrumxWallet {
             }
 
             let tx_hash = wallet_related_tx.1;
-            let tx_hex = self.electrumx_client.get_transaction(tx_hash.clone(), false, false).unwrap();
+            let tx_hex = self
+                .electrumx_client
+                .get_transaction(tx_hash.clone(), false, false)
+                .unwrap();
             let tx = hex::decode(tx_hex).unwrap();
 
             let tx: Transaction = deserialize(&tx).unwrap();
@@ -113,10 +131,19 @@ impl Wallet for ElectrumxWallet {
 }
 
 impl ElectrumxWallet {
-    pub fn new(wc: WalletConfig, mode: WalletLibraryMode) -> Result<(ElectrumxWallet, Mnemonic), WalletError> {
+    pub fn new(
+        wc: WalletConfig,
+        mode: WalletLibraryMode,
+    ) -> Result<(ElectrumxWallet, Mnemonic), WalletError> {
         let (wallet_lib, mnemonic) = WalletLibrary::new(wc, mode)?;
         let electrumx_client = ElectrumxClient::new("127.0.0.1:60401".to_string()).unwrap();
 
-        Ok((ElectrumxWallet { wallet_lib: Box::new(wallet_lib), electrumx_client }, mnemonic))
+        Ok((
+            ElectrumxWallet {
+                wallet_lib: Box::new(wallet_lib),
+                electrumx_client,
+            },
+            mnemonic,
+        ))
     }
 }

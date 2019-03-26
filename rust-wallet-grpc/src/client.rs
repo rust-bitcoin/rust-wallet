@@ -19,9 +19,11 @@ use grpc;
 use std::error::Error;
 
 use walletrpc_grpc::{Wallet, WalletClient};
-use walletrpc::{NewAddressRequest, NewChangeAddressRequest, GetUtxoListRequest, WalletBalanceRequest,
-                MakeTxRequest, SendCoinsRequest, UnlockCoinsRequest, SyncWithTipRequest, ShutdownRequest,
-                AddressType as RpcAddressType, Utxo as RpcUtxo, OutPoint as RpcOutPoint};
+use walletrpc::{
+    NewAddressRequest, NewChangeAddressRequest, GetUtxoListRequest, WalletBalanceRequest,
+    MakeTxRequest, SendCoinsRequest, UnlockCoinsRequest, SyncWithTipRequest, ShutdownRequest,
+    AddressType as RpcAddressType, Utxo as RpcUtxo, OutPoint as RpcOutPoint,
+};
 
 pub struct WalletClientWrapper {
     client: WalletClient,
@@ -47,7 +49,9 @@ impl WalletClientWrapper {
         let mut req = NewChangeAddressRequest::new();
         req.set_addr_type(addr_type);
 
-        let resp = self.client.new_change_address(grpc::RequestOptions::new(), req);
+        let resp = self
+            .client
+            .new_change_address(grpc::RequestOptions::new(), req);
         resp.wait().unwrap().1.address
     }
 
@@ -63,7 +67,13 @@ impl WalletClientWrapper {
         resp.wait().unwrap().1.total_balance
     }
 
-    pub fn make_tx(&self, ops: Vec<RpcOutPoint>, dest_addr: String, amt: u64, submit: bool) -> Vec<u8> {
+    pub fn make_tx(
+        &self,
+        ops: Vec<RpcOutPoint>,
+        dest_addr: String,
+        amt: u64,
+        submit: bool,
+    ) -> Vec<u8> {
         let mut req = MakeTxRequest::new();
         req.set_ops(RepeatedField::from_vec(ops));
         req.set_dest_addr(dest_addr);
@@ -73,7 +83,13 @@ impl WalletClientWrapper {
         resp.wait().unwrap().1.serialized_raw_tx
     }
 
-    pub fn send_coins(&self, dest_addr: String, amt: u64, submit: bool, lock_coins: bool) -> Result<(Vec<u8>, u64), Box<Error>> {
+    pub fn send_coins(
+        &self,
+        dest_addr: String,
+        amt: u64,
+        submit: bool,
+        lock_coins: bool,
+    ) -> Result<(Vec<u8>, u64), Box<Error>> {
         let mut req = SendCoinsRequest::new();
         req.set_dest_addr(dest_addr);
         req.set_amt(amt);

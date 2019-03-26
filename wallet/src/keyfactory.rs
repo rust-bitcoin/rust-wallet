@@ -32,8 +32,14 @@ pub struct KeyFactory;
 
 impl KeyFactory {
     /// create a new random master private key
-    pub fn new_master_private_key(entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str, debug: bool) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>), WalletError> {
-        let mut encrypted = vec!(0u8; entropy as usize);
+    pub fn new_master_private_key(
+        entropy: MasterKeyEntropy,
+        network: Network,
+        passphrase: &str,
+        salt: &str,
+        debug: bool,
+    ) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>), WalletError> {
+        let mut encrypted = vec![0u8; entropy as usize];
         if let Ok(mut rng) = OsRng::new() {
             if !debug {
                 rng.fill_bytes(encrypted.as_mut_slice());
@@ -41,28 +47,44 @@ impl KeyFactory {
             let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
             let seed = Seed::new(&mnemonic, salt);
             let key = KeyFactory::master_private_key(network, &seed)?;
-            return Ok((key, mnemonic, encrypted))
+            return Ok((key, mnemonic, encrypted));
         }
         Err(WalletError::Generic("can not obtain random source"))
     }
 
     /// decrypt stored master key
-    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic), WalletError> {
-        let mnemonic = Mnemonic::new (encrypted, passphrase)?;
+    pub fn decrypt(
+        encrypted: &[u8],
+        network: Network,
+        passphrase: &str,
+        salt: &str,
+    ) -> Result<(ExtendedPrivKey, Mnemonic), WalletError> {
+        let mnemonic = Mnemonic::new(encrypted, passphrase)?;
         let seed = Seed::new(&mnemonic, salt);
         let key = KeyFactory::master_private_key(network, &seed)?;
         Ok((key, mnemonic))
     }
 
-    pub fn recover_from_mnemonic(mnemonic: &Mnemonic, network: Network, salt: &str) -> Result<ExtendedPrivKey, WalletError> {
+    pub fn recover_from_mnemonic(
+        mnemonic: &Mnemonic,
+        network: Network,
+        salt: &str,
+    ) -> Result<ExtendedPrivKey, WalletError> {
         let seed = Seed::new(&mnemonic, salt);
         let key = KeyFactory::master_private_key(network, &seed)?;
         Ok(key)
     }
 
     /// create a master private key from seed
-    pub fn master_private_key(network: Network, seed: &Seed) -> Result<ExtendedPrivKey, WalletError> {
-        Ok(ExtendedPrivKey::new_master (&Secp256k1::new(), network, &seed.0)?)
+    pub fn master_private_key(
+        network: Network,
+        seed: &Seed,
+    ) -> Result<ExtendedPrivKey, WalletError> {
+        Ok(ExtendedPrivKey::new_master(
+            &Secp256k1::new(),
+            network,
+            &seed.0,
+        )?)
     }
 
     /// get extended public key for a known private key
@@ -70,11 +92,18 @@ impl KeyFactory {
         ExtendedPubKey::from_private(&Secp256k1::new(), extended_private_key)
     }
 
-    pub fn private_child (extended_private_key: &ExtendedPrivKey, child: ChildNumber) -> Result<ExtendedPrivKey, WalletError> {
+    pub fn private_child(
+        extended_private_key: &ExtendedPrivKey,
+        child: ChildNumber,
+    ) -> Result<ExtendedPrivKey, WalletError> {
         Ok(extended_private_key.ckd_priv(&Secp256k1::new(), child)?)
     }
 
-    pub fn public_child (&self, extended_public_key: &ExtendedPubKey, child: ChildNumber) -> Result<ExtendedPubKey, WalletError> {
+    pub fn public_child(
+        &self,
+        extended_public_key: &ExtendedPubKey,
+        child: ChildNumber,
+    ) -> Result<ExtendedPubKey, WalletError> {
         Ok(extended_public_key.ckd_pub(&Secp256k1::new(), child)?)
     }
 }
@@ -83,14 +112,14 @@ impl KeyFactory {
 pub enum MasterKeyEntropy {
     Low = 16,
     Recommended = 32,
-    Paranoid = 64
+    Paranoid = 64,
 }
 
 pub struct Seed(Vec<u8>);
 
 impl Seed {
     // return a copy of the seed data
-    pub fn data (&self) -> Vec<u8> {
+    pub fn data(&self) -> Vec<u8> {
         self.0.clone()
     }
 }
@@ -121,7 +150,7 @@ mod test {
     use self::hex::decode;
 
     #[test]
-    fn bip32_tests () {
+    fn bip32_tests() {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("tests/BIP32.json");
         let mut file = File::open(d).unwrap();
@@ -131,23 +160,37 @@ mod test {
         let tests = json.as_array().unwrap();
         for test in tests {
             let seed = Seed(decode(test["seed"].as_string().unwrap()).unwrap());
-            let master_private = super::KeyFactory::master_private_key(Network::Bitcoin, &seed).unwrap();
-            assert_eq!(test["private"].as_string().unwrap(), master_private.to_string());
-            assert_eq!(test["public"].as_string().unwrap(), super::KeyFactory::extended_public_from_private(&master_private).to_string());
+            let master_private =
+                super::KeyFactory::master_private_key(Network::Bitcoin, &seed).unwrap();
+            assert_eq!(
+                test["private"].as_string().unwrap(),
+                master_private.to_string()
+            );
+            assert_eq!(
+                test["public"].as_string().unwrap(),
+                super::KeyFactory::extended_public_from_private(&master_private).to_string()
+            );
             for d in test["derived"].as_array().unwrap() {
                 let mut key = master_private.clone();
-                for l in d ["locator"].as_array().unwrap() {
-                    let sequence = l ["sequence"].as_u64().unwrap();
-                    let private = l ["private"].as_boolean().unwrap();
+                for l in d["locator"].as_array().unwrap() {
+                    let sequence = l["sequence"].as_u64().unwrap();
+                    let private = l["private"].as_boolean().unwrap();
                     let child = if private {
-                        ChildNumber::Hardened{index: sequence as u32}
+                        ChildNumber::Hardened {
+                            index: sequence as u32,
+                        }
                     } else {
-                        ChildNumber::Normal{index: sequence as u32}
+                        ChildNumber::Normal {
+                            index: sequence as u32,
+                        }
                     };
                     key = super::KeyFactory::private_child(&key.clone(), child).unwrap();
                 }
-                assert_eq!(d ["private"].as_string().unwrap(), key.to_string());
-                assert_eq!(d ["public"].as_string().unwrap(), super::KeyFactory::extended_public_from_private(&key).to_string());
+                assert_eq!(d["private"].as_string().unwrap(), key.to_string());
+                assert_eq!(
+                    d["public"].as_string().unwrap(),
+                    super::KeyFactory::extended_public_from_private(&key).to_string()
+                );
             }
         }
     }

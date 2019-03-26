@@ -38,15 +38,30 @@ impl Wallet for WalletWithTrustedFullNode {
 
     fn reconnect(&mut self) {}
 
-    fn send_coins(&mut self, addr_str: String, amt: u64, lock_coins: bool, witness_only: bool, submit: bool) -> Result<(Transaction, LockId), Box<Error>> {
-        let (tx, lock_id) = self.wallet_lib.send_coins(addr_str, amt, lock_coins, witness_only)?;
+    fn send_coins(
+        &mut self,
+        addr_str: String,
+        amt: u64,
+        lock_coins: bool,
+        witness_only: bool,
+        submit: bool,
+    ) -> Result<(Transaction, LockId), Box<Error>> {
+        let (tx, lock_id) = self
+            .wallet_lib
+            .send_coins(addr_str, amt, lock_coins, witness_only)?;
         if submit {
             self.bio.send_raw_transaction(&tx);
         }
         Ok((tx, lock_id))
     }
 
-    fn make_tx(&mut self, ops: Vec<OutPoint>, addr_str: String, amt: u64, submit: bool) -> Result<Transaction, Box<Error>> {
+    fn make_tx(
+        &mut self,
+        ops: Vec<OutPoint>,
+        addr_str: String,
+        amt: u64,
+        submit: bool,
+    ) -> Result<Transaction, Box<Error>> {
         let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
         if submit {
             self.bio.send_raw_transaction(&tx);
@@ -68,31 +83,20 @@ impl Wallet for WalletWithTrustedFullNode {
 
 impl WalletWithTrustedFullNode {
     /// initialize with new random master key
-    // TODO(evg): avoid code duplicate
-//    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str, cfg: BitcoindConfig) -> Result<AccountFactory, WalletError> {
-//        let key_factory = KeyFactory::new();
-//        let (master_key, mnemonic, encrypted) = key_factory.new_master_private_key (entropy, network, passphrase, salt)?;
-//        let client = BitcoinCoreClient::new(&cfg.url, &cfg.user, &cfg.password);
-//        let db = DB::open_default("rocks.db").unwrap();
-//        Ok(AccountFactory{
-//            key_factory: Arc::new(key_factory),
-//            master_key,
-//            mnemonic,
-//            encrypted,
-//            account_list: Vec::new(),
-//            network,
-//            cfg,
-//            client,
-//            last_seen_block_height: 1,
-//            op_to_utxo: HashMap::new(),
-//            db: Arc::new(RwLock::new(db)),
-//        })
-//    }
-
-    pub fn new(wc: WalletConfig, bio: Box<BlockChainIO + Send>, mode: WalletLibraryMode) -> Result<(WalletWithTrustedFullNode, Mnemonic), WalletError> {
+    pub fn new(
+        wc: WalletConfig,
+        bio: Box<BlockChainIO + Send>,
+        mode: WalletLibraryMode,
+    ) -> Result<(WalletWithTrustedFullNode, Mnemonic), WalletError> {
         let (wallet_lib, mnemonic) = WalletLibrary::new(wc, mode).unwrap();
 
-        Ok((WalletWithTrustedFullNode { wallet_lib: Box::new(wallet_lib), bio }, mnemonic))
+        Ok((
+            WalletWithTrustedFullNode {
+                wallet_lib: Box::new(wallet_lib),
+                bio,
+            },
+            mnemonic,
+        ))
     }
 
     fn process_block(&mut self, block_height: usize, block: &Block) {
@@ -100,13 +104,15 @@ impl WalletWithTrustedFullNode {
             self.wallet_lib.process_tx(&tx);
         }
         // TODO(evg): if block_height > self.last_seen_block_height?
-        self.wallet_lib.update_last_seen_block_height_in_memory(block_height);
+        self.wallet_lib
+            .update_last_seen_block_height_in_memory(block_height);
 
-        self.wallet_lib.update_last_seen_block_height_in_db(block_height);
+        self.wallet_lib
+            .update_last_seen_block_height_in_db(block_height);
     }
 
     fn process_block_range(&mut self, left: usize, right: usize) {
-        for i in left..right+1 {
+        for i in left..right + 1 {
             let block_hash = self.bio.get_block_hash(i as u32);
             let block = self.bio.get_block(&block_hash);
             self.process_block(i, &block);

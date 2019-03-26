@@ -28,36 +28,22 @@ static LAST_SEEN_BLOCK_HEIGHT: &'static [u8] = b"lsbh";
 static UTXO_MAP_CF: &'static str = "utxo_map";
 static EXTERNAL_PUBLIC_KEY_CF: &'static str = "epkcf";
 static INTERNAL_PUBLIC_KEY_CF: &'static str = "ipkcf";
-static P2PKH_ADDRESS_CF:  &'static str = "p2pkh";
+static P2PKH_ADDRESS_CF: &'static str = "p2pkh";
 static P2SHWH_ADDRESS_CF: &'static str = "p2shwh";
-static P2WKH_ADDRESS_CF:  &'static str = "p2wkh";
+static P2WKH_ADDRESS_CF: &'static str = "p2wkh";
 static LOCK_GROUP_MAP_CF: &'static str = "lgm";
 
 pub struct DB(RocksDB);
 
 impl DB {
     pub fn new(db_path: String) -> Self {
-        let utxo_map_cf= ColumnFamilyDescriptor::new(UTXO_MAP_CF, Options::default());
-        let public_key_cf = ColumnFamilyDescriptor::new(
-            EXTERNAL_PUBLIC_KEY_CF,
-            Options::default(),
-        );
-        let internal_public_key_cf = ColumnFamilyDescriptor::new(
-            INTERNAL_PUBLIC_KEY_CF,
-            Options::default(),
-        );
-        let p2pkh_address_cf = ColumnFamilyDescriptor::new(
-            P2PKH_ADDRESS_CF,
-            Options::default(),
-        );
-        let p2shwh_address_cf = ColumnFamilyDescriptor::new(
-            P2SHWH_ADDRESS_CF,
-            Options::default(),
-        );
-        let p2wkh_address_cf = ColumnFamilyDescriptor::new(
-            P2WKH_ADDRESS_CF,
-            Options::default(),
-        );
+        let utxo_map_cf = ColumnFamilyDescriptor::new(UTXO_MAP_CF, Options::default());
+        let public_key_cf = ColumnFamilyDescriptor::new(EXTERNAL_PUBLIC_KEY_CF, Options::default());
+        let internal_public_key_cf =
+            ColumnFamilyDescriptor::new(INTERNAL_PUBLIC_KEY_CF, Options::default());
+        let p2pkh_address_cf = ColumnFamilyDescriptor::new(P2PKH_ADDRESS_CF, Options::default());
+        let p2shwh_address_cf = ColumnFamilyDescriptor::new(P2SHWH_ADDRESS_CF, Options::default());
+        let p2wkh_address_cf = ColumnFamilyDescriptor::new(P2WKH_ADDRESS_CF, Options::default());
         let lock_group_map_cf = ColumnFamilyDescriptor::new(LOCK_GROUP_MAP_CF, Options::default());
 
         let mut db_opts = Options::default();
@@ -75,7 +61,8 @@ impl DB {
                 p2shwh_address_cf,
                 p2wkh_address_cf,
             ],
-        ).unwrap();
+        )
+        .unwrap();
         DB(db)
     }
 
@@ -93,7 +80,8 @@ impl DB {
     }
 
     pub fn get_last_seen_block_height(&self) -> usize {
-        self.0.get(LAST_SEEN_BLOCK_HEIGHT)
+        self.0
+            .get(LAST_SEEN_BLOCK_HEIGHT)
             .unwrap()
             .map(|val| BigEndian::read_u32(&*val) as usize)
             .unwrap_or(1)
@@ -160,17 +148,17 @@ impl DB {
     }
 
     pub fn get_full_address_list(&self) -> Vec<String> {
-        let p2pkh  = self.get_account_address_list(AccountAddressType::P2PKH);
+        let p2pkh = self.get_account_address_list(AccountAddressType::P2PKH);
         let p2shwh = self.get_account_address_list(AccountAddressType::P2SHWH);
-        let p2wkh  = self.get_account_address_list(AccountAddressType::P2WKH);
+        let p2wkh = self.get_account_address_list(AccountAddressType::P2WKH);
         let full = [&p2pkh[..], &p2shwh[..], &p2wkh[..]].concat();
         full
     }
     pub fn get_account_address_list(&self, addr_type: AccountAddressType) -> Vec<String> {
         let name = match addr_type {
-            AccountAddressType::P2PKH  => P2PKH_ADDRESS_CF,
+            AccountAddressType::P2PKH => P2PKH_ADDRESS_CF,
             AccountAddressType::P2SHWH => P2SHWH_ADDRESS_CF,
-            AccountAddressType::P2WKH  => P2WKH_ADDRESS_CF,
+            AccountAddressType::P2WKH => P2WKH_ADDRESS_CF,
         };
         let cf = self.0.cf_handle(name).unwrap();
         let db_iterator = self.0.iterator_cf(cf, IteratorMode::Start).unwrap();
@@ -202,11 +190,11 @@ impl DB {
             AccountAddressType::P2PKH => {
                 let cf = self.0.cf_handle(P2PKH_ADDRESS_CF).unwrap();
                 self.0.put_cf(cf, key.as_slice(), &[]).unwrap();
-            },
+            }
             AccountAddressType::P2SHWH => {
                 let cf = self.0.cf_handle(P2SHWH_ADDRESS_CF).unwrap();
                 self.0.put_cf(cf, key.as_slice(), &[]).unwrap();
-            },
+            }
             AccountAddressType::P2WKH => {
                 let cf = self.0.cf_handle(P2WKH_ADDRESS_CF).unwrap();
                 self.0.put_cf(cf, key.as_slice(), &[]).unwrap();

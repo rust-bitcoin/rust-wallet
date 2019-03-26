@@ -22,5 +22,6 @@ fn main() {
         input: &["src/walletrpc.proto"],
         rust_protobuf: true, // also generate protobuf messages, not just services
         ..Default::default()
-    }).expect("protoc-rust-grpc");
+    })
+    .expect("protoc-rust-grpc");
 }
