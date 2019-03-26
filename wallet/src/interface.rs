@@ -13,11 +13,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use bitcoin::{
-    util::hash::Sha256dHash,
     Block, Transaction, OutPoint,
 };
-use account::{Account, AccountAddressType, Utxo};
-use walletlibrary::LockId;
+use bitcoin_hashes::sha256d::Hash as Sha256dHash;
+use super::account::{Account, AccountAddressType, Utxo};
+use super::walletlibrary::LockId;
 
 use std::error::Error;
 

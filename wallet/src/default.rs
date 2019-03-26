@@ -16,10 +16,10 @@ use bitcoin::{Block, Transaction, OutPoint};
 
 use std::error::Error;
 
-use walletlibrary::{WalletLibrary, WalletConfig, LockId, WalletLibraryMode};
-use interface::{BlockChainIO, WalletLibraryInterface, Wallet};
-use error::WalletError;
-use mnemonic::Mnemonic;
+use super::walletlibrary::{WalletLibrary, WalletConfig, LockId, WalletLibraryMode};
+use super::interface::{BlockChainIO, WalletLibraryInterface, Wallet};
+use super::error::WalletError;
+use super::mnemonic::Mnemonic;
 
 // a factory for TREZOR (BIP44) compatible accounts
 pub struct WalletWithTrustedFullNode {

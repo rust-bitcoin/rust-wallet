@@ -19,7 +19,7 @@
 //!
 use bitcoin::{
     util::{
-        bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber},
+        bip32::{ExtendedPubKey, ExtendedPrivKey, ChildNumber},
         address::Address,
     },
     blockdata::{
@@ -27,9 +27,13 @@ use bitcoin::{
         transaction::OutPoint,
     },
     network::constants::Network,
+    PrivateKey,
+    PublicKey
 };
-use secp256k1::{Secp256k1, SecretKey, PublicKey};
-use db::DB;
+use secp256k1::Secp256k1;
+use serde::{Serialize, Deserialize};
+
+use super::DB;
 
 use std::{
     sync::{Arc, RwLock},
@@ -208,8 +212,8 @@ impl Account {
         }
     }
 
-    pub fn get_sk(&self, key_path: &KeyPath) -> SecretKey {
-        let path: &[ChildNumber] = &[
+    pub fn get_sk(&self, key_path: &KeyPath) -> PrivateKey {
+        let path = &[
             ChildNumber::Normal {
                 index: key_path.addr_chain.clone().into(),
             }, // TODO(evg): use addr chain enum instead?
@@ -221,7 +225,7 @@ impl Account {
             .account_key
             .derive_priv(&Secp256k1::new(), path)
             .unwrap();
-        extended_priv_key.secret_key
+        extended_priv_key.private_key
     }
 
     pub fn grab_utxo(&mut self, utxo: Utxo) {
@@ -234,7 +238,7 @@ impl Account {
     }
 
     pub fn next_external_pk(&mut self) -> Result<PublicKey, Box<Error>> {
-        let path: &[ChildNumber] = &[
+        let path = &[
             ChildNumber::Normal { index: 0 }, // TODO(evg): use addr chain enum instead?
             ChildNumber::Normal {
                 index: self.external_index,
@@ -262,7 +266,7 @@ impl Account {
     }
 
     pub fn next_internal_pk(&mut self) -> Result<PublicKey, Box<Error>> {
-        let path: &[ChildNumber] = &[
+        let path = &[
             ChildNumber::Normal { index: 1 },
             ChildNumber::Normal {
                 index: self.internal_index,
@@ -362,15 +366,14 @@ pub fn p2wkh_script_from_public_key(pk: &PublicKey, network: Network) -> Script 
 mod test {
     use bitcoin::{
         network::constants::Network,
-        util::hash::Sha256dHash,
         Block, Transaction,
-};
-    use hex;
+    };
+    use bitcoin_hashes::sha256d::Hash as Sha256dHash;
 
-    use walletlibrary::{WalletConfigBuilder, WalletLibraryMode, KeyGenConfig};
-    use default::WalletWithTrustedFullNode;
-    use account::AccountAddressType;
-    use interface::BlockChainIO;
+    use crate::walletlibrary::{WalletConfigBuilder, WalletLibraryMode, KeyGenConfig};
+    use crate::default::WalletWithTrustedFullNode;
+    use crate::account::AccountAddressType;
+    use crate::interface::BlockChainIO;
 
     struct FakeBlockChainIO;
 
@@ -427,12 +430,12 @@ mod test {
 
         for expected_pk in get_external_pk_vec() {
             let pk = account.next_external_pk().unwrap();
-            assert_eq!(hex::encode(&pk.serialize()[..]), expected_pk);
+            assert_eq!(hex::encode(&pk.key.serialize()[..]), expected_pk);
         }
 
         for expected_pk in get_internal_pk_vec() {
             let pk = account.next_internal_pk().unwrap();
-            assert_eq!(hex::encode(&pk.serialize()[..]), expected_pk);
+            assert_eq!(hex::encode(&pk.key.serialize()[..]), expected_pk);
         }
     }
 
@@ -468,12 +471,12 @@ mod test {
 
         for expected_pk in external_pk_vec {
             let pk = account.next_external_pk().unwrap();
-            assert_eq!(hex::encode(&pk.serialize()[..]), expected_pk);
+            assert_eq!(hex::encode(&pk.key.serialize()[..]), expected_pk);
         }
 
         for expected_pk in internal_pk_vec {
             let pk = account.next_internal_pk().unwrap();
-            assert_eq!(hex::encode(&pk.serialize()[..]), expected_pk);
+            assert_eq!(hex::encode(&pk.key.serialize()[..]), expected_pk);
         }
     }
 }

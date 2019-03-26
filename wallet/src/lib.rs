@@ -13,22 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-extern crate crypto;
-extern crate secp256k1;
-extern crate bitcoin;
-extern crate rand;
-extern crate hex;
-// extern crate bitcoin_rpc_client;
-extern crate bitcoin_bech32;
-extern crate rocksdb;
-extern crate byteorder;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde;
-extern crate serde_json;
-extern crate log;
-extern crate simple_logger;
-extern crate electrumx_client;
 
 pub mod mnemonic;
 pub mod error;
@@ -37,5 +21,7 @@ pub mod walletlibrary;
 pub mod default;
 pub mod electrumx;
 pub mod account;
-mod db;
 pub mod interface;
+
+mod db;
+use self::db::DB;

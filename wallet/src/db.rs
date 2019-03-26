@@ -13,15 +13,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use bitcoin::OutPoint;
-use secp256k1::{Secp256k1, PublicKey};
+use bitcoin::util::key::PublicKey;
 use rocksdb::{DB as RocksDB, ColumnFamilyDescriptor, Options, IteratorMode};
 use byteorder::{ByteOrder, BigEndian};
 use serde_json;
 
 use std::collections::HashMap;
 
-use account::{Utxo, SecretKeyHelper, AccountAddressType};
-use walletlibrary::{LockId, LockGroup};
+use super::account::{Utxo, SecretKeyHelper, AccountAddressType};
+use super::walletlibrary::{LockId, LockGroup};
 
 static BIP39_RANDOMNESS: &'static [u8] = b"bip39_randomness";
 static LAST_SEEN_BLOCK_HEIGHT: &'static [u8] = b"lsbh";
@@ -126,8 +126,9 @@ impl DB {
         let mut vec = Vec::new();
         for (key, val) in db_iterator {
             let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
-            let pk: Vec<u8> = serde_json::from_slice(&val).unwrap();
-            let pk = PublicKey::from_slice(&Secp256k1::new(), pk.as_slice()).unwrap();
+            let pk: String = serde_json::from_slice(&val).unwrap();
+            let pk = hex::decode(&pk).unwrap();
+            let pk = PublicKey::from_slice(pk.as_slice()).unwrap();
             vec.push((key_helper, pk));
         }
         vec
@@ -140,8 +141,9 @@ impl DB {
         let mut vec = Vec::new();
         for (key, val) in db_iterator {
             let key_helper: SecretKeyHelper = serde_json::from_slice(&key).unwrap();
-            let pk: Vec<u8> = serde_json::from_slice(&val).unwrap();
-            let pk = PublicKey::from_slice(&Secp256k1::new(), pk.as_slice()).unwrap();
+            let pk: String = serde_json::from_slice(&val).unwrap();
+            let pk = hex::decode(&pk).unwrap();
+            let pk = PublicKey::from_slice(pk.as_slice()).unwrap();
             vec.push((key_helper, pk));
         }
         vec

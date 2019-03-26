@@ -23,6 +23,7 @@ use bitcoin::{
         bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber},
         bip143,
         address::Address,
+        key::PublicKey,
     },
 
     blockdata::transaction::{OutPoint, Transaction, TxIn, TxOut},
@@ -30,7 +31,7 @@ use bitcoin::{
 
     network::constants::Network,
 };
-use secp256k1::{Secp256k1, PublicKey, Message};
+use secp256k1::{Secp256k1, Message};
 
 use std::{
     error::Error,
@@ -39,12 +40,14 @@ use std::{
     str::FromStr,
 };
 
-use error::WalletError;
-use mnemonic::Mnemonic;
-use keyfactory::{KeyFactory, MasterKeyEntropy};
-use account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain};
-use db::DB;
-use interface::WalletLibraryInterface;
+use serde::Serialize;
+
+use super::error::WalletError;
+use super::mnemonic::Mnemonic;
+use super::keyfactory::{KeyFactory, MasterKeyEntropy};
+use super::account::{Account, AccountAddressType, Utxo, KeyPath, AddressChain};
+use super::db::DB;
+use super::interface::WalletLibraryInterface;
 
 pub static DEFAULT_BITCOIND_RPC_CONNECT: &'static str = "http://127.0.0.1:18332";
 pub static DEFAULT_BITCOIND_RPC_USER: &'static str = "user";
@@ -407,24 +410,25 @@ impl WalletLibraryInterface for WalletLibrary {
 
             let ctx = Secp256k1::new();
             let sk = account.get_sk(&utxo.key_path);
-            let pk = PublicKey::from_secret_key(&ctx, &sk);
+            let pk = PublicKey::from_private_key(&ctx, &sk);
             // TODO(evg): do not hardcode bitcoin's network param
             match utxo.addr_type {
                 AccountAddressType::P2PKH => {
                     let pk_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
 
                     // TODO(evg): use SigHashType enum
+                    let hash = tx.signature_hash(i, &pk_script, 0x1);
                     let signature = ctx.sign(
-                        &Message::from(tx.signature_hash(i, &pk_script, 0x1).into_bytes()),
-                        &sk,
+                        &Message::from_slice(&hash[..]).unwrap(),
+                        &sk.key,
                     );
 
-                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    let mut serialized_sig = signature.serialize_der();
                     serialized_sig.push(0x1);
 
                     let script = Builder::new()
                         .push_slice(serialized_sig.as_slice())
-                        .push_slice(&pk.serialize())
+                        .push_slice(&pk.key.serialize())
                         .into_script();
                     tx.input[i].script_sig = script;
                 }
@@ -438,13 +442,13 @@ impl WalletLibraryInterface for WalletLibrary {
                         utxo.value,
                     );
 
-                    let signature = ctx.sign(&Message::from(tx_sig_hash.into_bytes()), &sk);
+                    let signature = ctx.sign(&Message::from_slice(&tx_sig_hash[..]).unwrap(), &sk.key);
 
-                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    let mut serialized_sig = signature.serialize_der();
                     serialized_sig.push(0x1);
 
                     tx.input[i].witness.push(serialized_sig);
-                    tx.input[i].witness.push(pk.serialize().to_vec());
+                    tx.input[i].witness.push(pk.key.serialize().to_vec());
 
                     tx.input[i].script_sig = Builder::new()
                         .push_slice(pk_script_p2wpkh.as_bytes())
@@ -459,13 +463,13 @@ impl WalletLibraryInterface for WalletLibrary {
                         utxo.value,
                     );
 
-                    let signature = ctx.sign(&Message::from(tx_sig_hash.into_bytes()), &sk);
+                    let signature = ctx.sign(&Message::from_slice(&tx_sig_hash[..]).unwrap(), &sk.key);
 
-                    let mut serialized_sig = signature.serialize_der(&ctx);
+                    let mut serialized_sig = signature.serialize_der();
                     serialized_sig.push(0x1);
 
                     tx.input[i].witness.push(serialized_sig);
-                    tx.input[i].witness.push(pk.serialize().to_vec());
+                    tx.input[i].witness.push(pk.key.serialize().to_vec());
                 }
             }
         }
@@ -518,8 +522,8 @@ impl WalletLibraryInterface for WalletLibrary {
                 {
                     // remove from account utxo map
                     let utxo = self.op_to_utxo.get(&input.previous_output).unwrap();
-                    let mut acc = &mut account_list[usize::from(utxo.addr_type.clone())];
-                    let mut utxo_map = &mut acc.utxo_list;
+                    let acc = &mut account_list[usize::from(utxo.addr_type.clone())];
+                    let utxo_map = &mut acc.utxo_list;
                     utxo_map.remove(&input.previous_output).unwrap();
 
                     self.db.write().unwrap().delete_utxo(&utxo.out_point);
@@ -530,7 +534,7 @@ impl WalletLibraryInterface for WalletLibrary {
             }
         }
         for account_index in 0..account_list.len() {
-            let mut account = &mut account_list[account_index];
+            let account = &mut account_list[account_index];
 
             for output_index in 0..tx.output.len() {
                 let output = &tx.output[output_index];

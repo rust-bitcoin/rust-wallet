@@ -17,7 +17,7 @@
 //!
 //! TREZOR compatible mnemonic in english
 //!
-use error::WalletError;
+use super::error::WalletError;
 use crypto::sha2::Sha256;
 use crypto::digest::Digest;
 use crypto::aes;
@@ -191,14 +191,13 @@ mod test {
     use std::fs::File;
     use std::path::PathBuf;
     use std::io::Read;
-    use keyfactory::Seed;
     use bitcoin::network::constants::Network;
+    use crate::keyfactory::{Seed, KeyFactory};
 
     extern crate rustc_serialize;
     extern crate hex;
     use self::rustc_serialize::json::Json;
     use self::hex::decode;
-    use keyfactory::KeyFactory;
 
     #[test]
     fn test_mnemonic() {
@@ -229,7 +228,7 @@ mod test {
                 let pk = values[3].as_string().unwrap();
 
                 let private_key = KeyFactory::master_private_key(Network::Bitcoin, &seed).unwrap();
-                let mut key = private_key.clone();
+                let key = private_key.clone();
 
                 assert_eq!(key.to_string(), pk);
                 pk_test_count += 1;

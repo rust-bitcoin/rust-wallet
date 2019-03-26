@@ -20,12 +20,12 @@
 use bitcoin::network::constants::Network;
 use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
 use secp256k1::Secp256k1;
-use error::WalletError;
+use super::error::WalletError;
 use crypto::pbkdf2::pbkdf2;
 use crypto::hmac::Hmac;
 use crypto::sha2::Sha512;
-use rand::{OsRng, RngCore};
-use mnemonic::Mnemonic;
+use rand::{rngs::OsRng, RngCore};
+use super::mnemonic::Mnemonic;
 
 /// a fabric of keys
 pub struct KeyFactory;
@@ -81,7 +81,6 @@ impl KeyFactory {
         seed: &Seed,
     ) -> Result<ExtendedPrivKey, WalletError> {
         Ok(ExtendedPrivKey::new_master(
-            &Secp256k1::new(),
             network,
             &seed.0,
         )?)
@@ -142,7 +141,7 @@ mod test {
     use std::io::Read;
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
-    use keyfactory::Seed;
+    use crate::keyfactory::Seed;
 
     extern crate rustc_serialize;
     extern crate hex;

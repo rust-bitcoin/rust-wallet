@@ -2,8 +2,15 @@
 name = "bitcoin_core_io"
 version = "0.1.0"
 authors = ["evgeniy.scherbina <evgeniy.scherbina@bitfury.com>"]
+edition = "2018"
+
+[dependencies.bitcoin]
+version = "0.18"
+features = ["use-serde"]
+
+[dependencies.bitcoin_hashes]
+version = "0.3"
 
 [dependencies]
-bitcoin = "0.14.2"
-bitcoin_rpc_client = { git = "https://github.com/rust-bitcoin-tools/bitcoinrpc_rust_client.git", branch = "enhancement" }
+bitcoin_rpc_client = { git = "https://github.com/LightningPeach/bitcoinrpc-rust-client.git" }
 wallet = { path = "../wallet" }

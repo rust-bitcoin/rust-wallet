@@ -13,15 +13,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate bitcoin;
-extern crate bitcoin_rpc_client;
-extern crate wallet;
-
 use bitcoin::{
     Block, BlockHeader, Transaction,
-    util::hash::Sha256dHash,
 };
-use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, SerializedRawTransaction};
+use bitcoin_hashes::sha256d::Hash as Sha256dHash;
+use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, rpc::SerializedRawTransaction};
 use wallet::interface::BlockChainIO;
 
 pub struct BitcoinCoreIO(BitcoinCoreClient);
@@ -42,6 +38,8 @@ impl BlockChainIO for BitcoinCoreIO {
     }
 
     fn get_block(&self, header_hash: &Sha256dHash) -> Block {
+        use bitcoin_hashes::hex::FromHex;
+
         let block = self.0.get_block(header_hash).unwrap().unwrap();
 
         // TODO(evg): review it
@@ -60,7 +58,7 @@ impl BlockChainIO for BitcoinCoreIO {
                 .get_raw_transaction_serialized(&txid)
                 .unwrap()
                 .unwrap();
-            let tx: Transaction = Transaction::from(tx_hex);
+            let tx: Transaction = tx_hex.into();
             txdata.push(tx);
         }
 

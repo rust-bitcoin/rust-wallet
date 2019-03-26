@@ -14,7 +14,7 @@
 // limitations under the License.
 use bitcoin::{
     Transaction, OutPoint,
-    network::serialize::{serialize_hex, deserialize},
+    consensus::encode::{serialize_hex, deserialize},
 };
 use hex;
 
@@ -27,10 +27,10 @@ use electrumx_client::{
     electrumx_client::ElectrumxClient,
     interface::Electrumx,
 };
-use walletlibrary::{WalletLibrary, WalletConfig, LockId, WalletLibraryMode};
-use interface::{WalletLibraryInterface, Wallet};
-use error::WalletError;
-use mnemonic::Mnemonic;
+use super::walletlibrary::{WalletLibrary, WalletConfig, LockId, WalletLibraryMode};
+use super::interface::{WalletLibraryInterface, Wallet};
+use super::error::WalletError;
+use super::mnemonic::Mnemonic;
 
 pub struct ElectrumxWallet {
     pub wallet_lib: Box<WalletLibraryInterface + Send>,
@@ -82,7 +82,7 @@ impl Wallet for ElectrumxWallet {
     }
 
     fn publish_tx(&mut self, tx: &Transaction) {
-        let tx = serialize_hex(tx).unwrap();
+        let tx = serialize_hex(tx);
         self.electrumx_client.broadcast_transaction(tx).unwrap();
     }
 

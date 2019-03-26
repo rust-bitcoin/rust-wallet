@@ -36,7 +36,7 @@ use wallet::{
     },
     electrumx::ElectrumxWallet,
     default::WalletWithTrustedFullNode,
-    interface::{WalletLibraryInterface, Wallet},
+    interface::Wallet,
 };
 use wallet::mnemonic::Mnemonic;
 
@@ -178,7 +178,7 @@ fn sanity_check(provider: BlockChainProvider) {
     let (bitcoind_client, cfg, host_port) = bitcoind_init(&node);
     let electrs_process = match provider {
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
@@ -249,7 +249,7 @@ fn base_wallet_functionality(provider: BlockChainProvider) {
     let (bitcoind_client, cfg, host_port) = bitcoind_init(&node);
     let electrs_process = match provider {
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
@@ -320,7 +320,7 @@ fn base_persistent_storage(provider: BlockChainProvider) {
     let (bitcoind_client, cfg, host_port) = bitcoind_init(&node);
     let electrs_process = match provider {
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
@@ -442,7 +442,7 @@ fn extended_persistent_storage(provider: BlockChainProvider) {
     let (bitcoind_client, cfg, host_port) = bitcoind_init(&node);
     let mut electrs_process = match provider {
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
@@ -600,7 +600,7 @@ fn restore_from_mnemonic(provider: BlockChainProvider) {
     let (bitcoind_client, cfg, host_port) = bitcoind_init(&node);
     let electrs_process = match provider {
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
@@ -716,7 +716,7 @@ fn make_tx_call(provider: BlockChainProvider) {
     let mut electrs_process = match provider {
         BlockChainProvider::TrustedFullNode => None,
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
@@ -820,7 +820,7 @@ fn send_coins_call(provider: BlockChainProvider) {
     let mut electrs_process = match provider {
         BlockChainProvider::TrustedFullNode => None,
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
@@ -920,7 +920,7 @@ fn lock_coins_flag_success(provider: BlockChainProvider) {
     let electrs_process = match provider {
         BlockChainProvider::TrustedFullNode => None,
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
@@ -997,7 +997,7 @@ fn lock_coins_flag_fail(provider: BlockChainProvider) {
     let electrs_process = match provider {
         BlockChainProvider::TrustedFullNode => None,
         BlockChainProvider::Electrumx => {
-            let mut electrs_process = launch_electrs_process(
+            let electrs_process = launch_electrs_process(
                 format!("{}:{}", cfg.user, cfg.password),
                 format!("127.0.0.1:{}", host_port),
                 "regtest".to_string(),
