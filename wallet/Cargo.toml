@@ -42,7 +42,7 @@ hex = "0.3"
 bitcoin-bech32 = "0.9"
 rocksdb = "0.12"
 byteorder = "1.3"
-electrumx_client = { git = "https://github.com/evgeniy-scherbina/rust-electrumx-client.git" }
+electrumx_client = { git = "https://github.com/LightningPeach/rust-electrumx-client.git" }
 
 [dev-dependencies]
 bitcoin_core_io = { path = "../bitcoin_core_io" }
