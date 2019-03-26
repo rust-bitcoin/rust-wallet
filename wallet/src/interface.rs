@@ -22,8 +22,8 @@ use super::walletlibrary::LockId;
 use std::error::Error;
 
 pub trait Wallet {
-    fn wallet_lib(&self) -> &Box<WalletLibraryInterface + Send>;
-    fn wallet_lib_mut(&mut self) -> &mut Box<WalletLibraryInterface + Send>;
+    fn wallet_lib(&self) -> &Box<dyn WalletLibraryInterface + Send>;
+    fn wallet_lib_mut(&mut self) -> &mut Box<dyn WalletLibraryInterface + Send>;
     fn reconnect(&mut self);
     fn send_coins(
         &mut self,
@@ -32,24 +32,24 @@ pub trait Wallet {
         submit: bool,
         lock_coins: bool,
         witness_only: bool,
-    ) -> Result<(Transaction, LockId), Box<Error>>;
+    ) -> Result<(Transaction, LockId), Box<dyn Error>>;
     fn make_tx(
         &mut self,
         ops: Vec<OutPoint>,
         addr_str: String,
         amt: u64,
         submit: bool,
-    ) -> Result<Transaction, Box<Error>>;
+    ) -> Result<Transaction, Box<dyn Error>>;
     fn publish_tx(&mut self, tx: &Transaction);
     fn sync_with_tip(&mut self);
 }
 
 pub trait WalletLibraryInterface {
-    fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>>;
+    fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<dyn Error>>;
     fn new_change_address(
         &mut self,
         address_type: AccountAddressType,
-    ) -> Result<String, Box<Error>>;
+    ) -> Result<String, Box<dyn Error>>;
     fn get_utxo_list(&self) -> Vec<Utxo>;
     fn wallet_balance(&self) -> u64;
     fn unlock_coins(&mut self, lock_id: LockId);
@@ -59,13 +59,13 @@ pub trait WalletLibraryInterface {
         amt: u64,
         lock_coins: bool,
         witness_only: bool,
-    ) -> Result<(Transaction, LockId), Box<Error>>;
+    ) -> Result<(Transaction, LockId), Box<dyn Error>>;
     fn make_tx(
         &mut self,
         ops: Vec<OutPoint>,
         addr_str: String,
         amt: u64,
-    ) -> Result<Transaction, Box<Error>>;
+    ) -> Result<Transaction, Box<dyn Error>>;
     fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account;
     fn get_last_seen_block_height_from_memory(&self) -> usize;
     fn update_last_seen_block_height_in_memory(&mut self, block_height: usize);

@@ -76,7 +76,7 @@ enum BlockChainProvider {
 }
 
 fn generate_money_for_wallet(
-    af: &mut Box<Wallet>,
+    af: &mut Box<dyn Wallet>,
     bitcoind_client: &BitcoinCoreClient,
     provider: BlockChainProvider,
 ) {

@@ -237,7 +237,7 @@ impl Account {
         &self.utxo_list
     }
 
-    pub fn next_external_pk(&mut self) -> Result<PublicKey, Box<Error>> {
+    pub fn next_external_pk(&mut self) -> Result<PublicKey, Box<dyn Error>> {
         let path = &[
             ChildNumber::Normal { index: 0 }, // TODO(evg): use addr chain enum instead?
             ChildNumber::Normal {
@@ -265,7 +265,7 @@ impl Account {
         Ok(extended_pub_key.public_key)
     }
 
-    pub fn next_internal_pk(&mut self) -> Result<PublicKey, Box<Error>> {
+    pub fn next_internal_pk(&mut self) -> Result<PublicKey, Box<dyn Error>> {
         let path = &[
             ChildNumber::Normal { index: 1 },
             ChildNumber::Normal {
@@ -309,7 +309,7 @@ impl Account {
         }
     }
 
-    pub fn new_address(&mut self) -> Result<String, Box<Error>> {
+    pub fn new_address(&mut self) -> Result<String, Box<dyn Error>> {
         let pk = self.next_external_pk()?;
         let addr = self.addr_from_pk(&pk);
         self.btc_address_list.push(addr.clone());
@@ -320,7 +320,7 @@ impl Account {
         Ok(addr)
     }
 
-    pub fn new_change_address(&mut self) -> Result<String, Box<Error>> {
+    pub fn new_change_address(&mut self) -> Result<String, Box<dyn Error>> {
         let pk = self.next_internal_pk()?;
         let addr = self.addr_from_pk(&pk);
         self.btc_address_list.push(addr.clone());

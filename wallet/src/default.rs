@@ -23,16 +23,16 @@ use super::mnemonic::Mnemonic;
 
 // a factory for TREZOR (BIP44) compatible accounts
 pub struct WalletWithTrustedFullNode {
-    pub wallet_lib: Box<WalletLibraryInterface + Send>,
-    bio: Box<BlockChainIO + Send>,
+    pub wallet_lib: Box<dyn WalletLibraryInterface + Send>,
+    bio: Box<dyn BlockChainIO + Send>,
 }
 
 impl Wallet for WalletWithTrustedFullNode {
-    fn wallet_lib(&self) -> &Box<WalletLibraryInterface + Send> {
+    fn wallet_lib(&self) -> &Box<dyn WalletLibraryInterface + Send> {
         &self.wallet_lib
     }
 
-    fn wallet_lib_mut(&mut self) -> &mut Box<WalletLibraryInterface + Send> {
+    fn wallet_lib_mut(&mut self) -> &mut Box<dyn WalletLibraryInterface + Send> {
         &mut self.wallet_lib
     }
 
@@ -45,7 +45,7 @@ impl Wallet for WalletWithTrustedFullNode {
         lock_coins: bool,
         witness_only: bool,
         submit: bool,
-    ) -> Result<(Transaction, LockId), Box<Error>> {
+    ) -> Result<(Transaction, LockId), Box<dyn Error>> {
         let (tx, lock_id) = self
             .wallet_lib
             .send_coins(addr_str, amt, lock_coins, witness_only)?;
@@ -61,7 +61,7 @@ impl Wallet for WalletWithTrustedFullNode {
         addr_str: String,
         amt: u64,
         submit: bool,
-    ) -> Result<Transaction, Box<Error>> {
+    ) -> Result<Transaction, Box<dyn Error>> {
         let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
         if submit {
             self.bio.send_raw_transaction(&tx);
@@ -85,7 +85,7 @@ impl WalletWithTrustedFullNode {
     /// initialize with new random master key
     pub fn new(
         wc: WalletConfig,
-        bio: Box<BlockChainIO + Send>,
+        bio: Box<dyn BlockChainIO + Send>,
         mode: WalletLibraryMode,
     ) -> Result<(WalletWithTrustedFullNode, Mnemonic), WalletError> {
         let (wallet_lib, mnemonic) = WalletLibrary::new(wc, mode).unwrap();

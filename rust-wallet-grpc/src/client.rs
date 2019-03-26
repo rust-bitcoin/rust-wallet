@@ -88,7 +88,7 @@ impl WalletClientWrapper {
         amt: u64,
         submit: bool,
         lock_coins: bool,
-    ) -> Result<(Vec<u8>, u64), Box<Error>> {
+    ) -> Result<(Vec<u8>, u64), Box<dyn Error>> {
         let mut req = SendCoinsRequest::new();
         req.set_dest_addr(dest_addr);
         req.set_amt(amt);

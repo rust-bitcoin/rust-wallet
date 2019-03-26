@@ -256,14 +256,14 @@ pub struct WalletLibrary {
 }
 
 impl WalletLibraryInterface for WalletLibrary {
-    fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<Error>> {
+    fn new_address(&mut self, address_type: AccountAddressType) -> Result<String, Box<dyn Error>> {
         self.get_account_mut(address_type).new_address()
     }
 
     fn new_change_address(
         &mut self,
         address_type: AccountAddressType,
-    ) -> Result<String, Box<Error>> {
+    ) -> Result<String, Box<dyn Error>> {
         self.get_account_mut(address_type).new_change_address()
     }
 
@@ -303,7 +303,7 @@ impl WalletLibraryInterface for WalletLibrary {
         amt: u64,
         lock_coins: bool,
         witness_only: bool,
-    ) -> Result<(Transaction, LockId), Box<Error>> {
+    ) -> Result<(Transaction, LockId), Box<dyn Error>> {
         let utxo_list = self.get_utxo_list();
 
         let mut total = 0;
@@ -352,7 +352,7 @@ impl WalletLibraryInterface for WalletLibrary {
         ops: Vec<OutPoint>,
         addr_str: String,
         amt: u64,
-    ) -> Result<Transaction, Box<Error>> {
+    ) -> Result<Transaction, Box<dyn Error>> {
         let addr: Address = Address::from_str(&addr_str).unwrap();
 
         let mut tx = Transaction {

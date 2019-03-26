@@ -33,16 +33,16 @@ use super::error::WalletError;
 use super::mnemonic::Mnemonic;
 
 pub struct ElectrumxWallet {
-    pub wallet_lib: Box<WalletLibraryInterface + Send>,
+    pub wallet_lib: Box<dyn WalletLibraryInterface + Send>,
     electrumx_client: ElectrumxClient<String>,
 }
 
 impl Wallet for ElectrumxWallet {
-    fn wallet_lib(&self) -> &Box<WalletLibraryInterface + Send> {
+    fn wallet_lib(&self) -> &Box<dyn WalletLibraryInterface + Send> {
         &self.wallet_lib
     }
 
-    fn wallet_lib_mut(&mut self) -> &mut Box<WalletLibraryInterface + Send> {
+    fn wallet_lib_mut(&mut self) -> &mut Box<dyn WalletLibraryInterface + Send> {
         &mut self.wallet_lib
     }
 
@@ -57,7 +57,7 @@ impl Wallet for ElectrumxWallet {
         lock_coins: bool,
         witness_only: bool,
         submit: bool,
-    ) -> Result<(Transaction, LockId), Box<Error>> {
+    ) -> Result<(Transaction, LockId), Box<dyn Error>> {
         let (tx, lock_id) = self
             .wallet_lib
             .send_coins(addr_str, amt, lock_coins, witness_only)?;
@@ -73,7 +73,7 @@ impl Wallet for ElectrumxWallet {
         addr_str: String,
         amt: u64,
         submit: bool,
-    ) -> Result<Transaction, Box<Error>> {
+    ) -> Result<Transaction, Box<dyn Error>> {
         let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
         if submit {
             self.publish_tx(&tx);

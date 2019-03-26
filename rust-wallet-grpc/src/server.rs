@@ -49,7 +49,7 @@ use super::walletrpc::{
 pub const DEFAULT_WALLET_RPC_PORT: u16 = 5051;
 const SHUTDOWN_TIMEOUT_IN_MS: u64 = 50;
 
-fn grpc_error<T: Send>(resp: Result<T, Box<Error>>) -> grpc::SingleResponse<T> {
+fn grpc_error<T: Send>(resp: Result<T, Box<dyn Error>>) -> grpc::SingleResponse<T> {
     match resp {
         Ok(resp) => grpc::SingleResponse::completed(resp),
         Err(e) => grpc::SingleResponse::err(grpc::Error::Panic(e.to_string())),
@@ -93,13 +93,13 @@ impl Into<RpcAddressType> for AccountAddressType {
 struct ShutdownSignal;
 
 struct WalletImpl {
-    af: Arc<Mutex<Box<WalletInterface + Send>>>,
+    af: Arc<Mutex<Box<dyn WalletInterface + Send>>>,
     shutdown: Mutex<Sender<ShutdownSignal>>,
 }
 
 impl WalletImpl {
     fn new(
-        af: Arc<Mutex<Box<WalletInterface + Send>>>,
+        af: Arc<Mutex<Box<dyn WalletInterface + Send>>>,
         shutdown: Mutex<Sender<ShutdownSignal>>,
     ) -> Self {
         Self { af, shutdown }
@@ -108,7 +108,7 @@ impl WalletImpl {
     fn new_address_helper(
         &self,
         req: &NewAddressRequest,
-    ) -> Result<NewAddressResponse, Box<Error>> {
+    ) -> Result<NewAddressResponse, Box<dyn Error>> {
         let mut resp = NewAddressResponse::new();
         let mut ac = self.af.lock().unwrap();
         let account = ac
@@ -122,7 +122,7 @@ impl WalletImpl {
     fn new_change_address(
         &self,
         req: &NewChangeAddressRequest,
-    ) -> Result<NewChangeAddressResponse, Box<Error>> {
+    ) -> Result<NewChangeAddressResponse, Box<dyn Error>> {
         let mut resp = NewChangeAddressResponse::new();
         let mut ac = self.af.lock().unwrap();
         let account = ac
@@ -133,7 +133,7 @@ impl WalletImpl {
         Ok(resp)
     }
 
-    fn make_tx_helper(&self, req: MakeTxRequest) -> Result<MakeTxResponse, Box<Error>> {
+    fn make_tx_helper(&self, req: MakeTxRequest) -> Result<MakeTxResponse, Box<dyn Error>> {
         use bitcoin_hashes::Hash;
 
         let mut ops = Vec::new();
@@ -155,7 +155,7 @@ impl WalletImpl {
         Ok(resp)
     }
 
-    fn send_coins_helper(&self, req: SendCoinsRequest) -> Result<SendCoinsResponse, Box<Error>> {
+    fn send_coins_helper(&self, req: SendCoinsRequest) -> Result<SendCoinsResponse, Box<dyn Error>> {
         let (tx, lock_id) = self.af.lock().unwrap().send_coins(
             req.dest_addr,
             req.amt,
@@ -278,7 +278,7 @@ impl Wallet for WalletImpl {
     }
 }
 
-pub fn launch_server_new(wallet: Box<WalletInterface + Send>, wallet_rpc_port: u16) {
+pub fn launch_server_new(wallet: Box<dyn WalletInterface + Send>, wallet_rpc_port: u16) {
     let wallet = Arc::new(Mutex::new(wallet));
 
     let (shutdown_sender, shutdown_receiver) = mpsc::channel();
