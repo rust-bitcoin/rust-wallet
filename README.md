@@ -33,8 +33,16 @@ Install the wallet:
 ```
 git clone https://github.com/LightningPeach/rust-wallet.git
 cd rust-wallet/rust-wallet-grpc
-cargo install --debug
+cargo install --debug --path .
 ```
+
+If the wallet already installed the last command should be: 
+
+```
+cargo install --debug --force --path .
+```
+
+in order to rewrite the binary.
 
 Launch the wallet:
 ```
