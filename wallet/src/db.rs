@@ -66,13 +66,9 @@ impl DB {
         DB(db)
     }
 
-    pub fn has_bip39_randomness(&self) -> bool {
-        self.0.get(BIP39_RANDOMNESS).unwrap().is_some()
-    }
-
-    pub fn get_bip39_randomness(&self) -> Vec<u8> {
-        let randomness = self.0.get(BIP39_RANDOMNESS).unwrap().unwrap();
-        (*randomness).to_vec()
+    pub fn get_bip39_randomness(&self) -> Option<Vec<u8>> {
+        self.0.get(BIP39_RANDOMNESS).unwrap()
+            .map(|v| v.to_vec())
     }
 
     pub fn put_bip39_randomness(&self, randomness: &[u8]) {
