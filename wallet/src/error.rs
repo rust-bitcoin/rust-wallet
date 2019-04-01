@@ -27,8 +27,6 @@ use crypto::symmetriccipher;
 
 /// An error class to offer a unified error interface upstream
 pub enum WalletError {
-    /// generic error message
-    Generic(&'static str),
     /// Network IO error
     IO(io::Error),
     /// key derivation error
@@ -37,29 +35,36 @@ pub enum WalletError {
     SymmetricCipherError(symmetriccipher::SymmetricCipherError),
     /// has no key in db
     HasNoWalletInDatabase,
+    /// Mnemonic contains an unknown word
+    UnknownMnemonicWord,
+    /// Mnemonic must have a word count divisible by 3
+    InvalidMnemonicLength,
+    /// Data for mnemonic should have a length divisible by 4
+    InvalidMnemonicData,
+    /// Mnemonic checking bits not match
+    MnemonicChecksumNotMatch,
+    /// Cannot obtain random source
+    CannotObtainRandomSource,
 }
 
 impl Error for WalletError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            &WalletError::Generic(_) => None,
             &WalletError::IO(ref err) => Some(err),
             &WalletError::KeyDerivation(ref err) => Some(err),
-            &WalletError::SymmetricCipherError(_) => None,
-            &WalletError::HasNoWalletInDatabase => None,
+            _ => None,
         }
     }
 }
 
 impl fmt::Display for WalletError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
+        match self {
             // Both underlying errors already impl `Display`, so we defer to
             // their implementations.
-            WalletError::Generic(ref s) => write!(f, "Generic: {}", s),
-            WalletError::IO(ref err) => write!(f, "IO error: {}", err),
-            WalletError::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err),
-            WalletError::SymmetricCipherError(ref err) => write!(
+            &WalletError::IO(ref err) => write!(f, "IO error: {}", err),
+            &WalletError::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err),
+            &WalletError::SymmetricCipherError(ref err) => write!(
                 f,
                 "Cipher error: {}",
                 match err {
@@ -67,7 +72,16 @@ impl fmt::Display for WalletError {
                     &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
                 }
             ),
-            WalletError::HasNoWalletInDatabase => write!(f, "has no wallet in database"),
+            &WalletError::HasNoWalletInDatabase => write!(f, "has no wallet in database"),
+            &WalletError::UnknownMnemonicWord => write!(f, "mnemonic contains an unknown word"),
+            &WalletError::InvalidMnemonicLength => {
+                write!(f, "mnemonic must have a word count divisible by 3")
+            },
+            &WalletError::InvalidMnemonicData => {
+                write!(f, "data for mnemonic should have a length divisible by 4")
+            },
+            &WalletError::MnemonicChecksumNotMatch => write!(f, "mnemonic checking bits not match"),
+            &WalletError::CannotObtainRandomSource => write!(f, "cannot obtain random source"),
         }
     }
 }

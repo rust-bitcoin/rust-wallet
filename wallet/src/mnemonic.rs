@@ -54,16 +54,14 @@ impl Mnemonic {
     pub fn from(s: &str) -> Result<Self, WalletError> {
         let words: Vec<_> = s.split(' ').collect();
         if words.len() < 3 || words.len() % 3 != 0 {
-            return Err(WalletError::Generic(
-                "Mnemonic must have a word count divisible with 3",
-            ));
+            return Err(WalletError::InvalidMnemonicLength);
         }
         let mut mnemonic = Vec::new();
         for word in &words {
             if let Ok(idx) = WORDS.binary_search(word) {
                 mnemonic.push(WORDS[idx]);
             } else {
-                return Err(WalletError::Generic("Mnemonic contains an unknown word"));
+                return Err(WalletError::UnknownMnemonicWord);
             }
         }
         Ok(Mnemonic(mnemonic))
@@ -91,9 +89,7 @@ impl Mnemonic {
     // create a mnemonic for some data
     fn mnemonic(data: &[u8]) -> Result<Self, WalletError> {
         if data.len() % 4 != 0 {
-            return Err(WalletError::Generic(
-                "Data for mnemonic should have a length divisible by 4",
-            ));
+            return Err(WalletError::InvalidMnemonicData);
         }
         let mut check = [0u8; 32];
 
@@ -137,7 +133,7 @@ impl Mnemonic {
         for word in self.0.iter() {
             let index = WORDS
                 .binary_search(word)
-                .map_err(|_| WalletError::Generic("Mnemonic contains an unknown word"))?;
+                .map_err(|_| WalletError::UnknownMnemonicWord)?;
             for i in 0..11 {
                 bits.push(index & (1 << (10 - i)) > 0);
             }
@@ -178,9 +174,7 @@ impl Mnemonic {
         if check_bytes_result && check_bits_result {
             Ok(data.to_vec())
         } else {
-            Err(WalletError::Generic(
-                "Invalid mnemonic checking bits not match",
-            ))
+            Err(WalletError::MnemonicChecksumNotMatch)
         }
     }
 }
@@ -193,11 +187,7 @@ mod test {
     use std::io::Read;
     use bitcoin::network::constants::Network;
     use crate::keyfactory::{Seed, KeyFactory};
-
-    extern crate rustc_serialize;
-    extern crate hex;
-    use self::rustc_serialize::json::Json;
-    use self::hex::decode;
+    use rustc_serialize::json::Json;
 
     #[test]
     fn test_mnemonic() {
@@ -214,7 +204,7 @@ mod test {
 
         for t in 0..tests.len() {
             let values = tests[t].as_array().unwrap();
-            let data = decode(values[0].as_string().unwrap()).unwrap();
+            let data = hex::decode(values[0].as_string().unwrap()).unwrap();
             let mnemonic = Mnemonic::from(values[1].as_string().unwrap()).unwrap();
             let seed = Seed::new(&mnemonic, "TREZOR");
             assert_eq!(
@@ -222,7 +212,7 @@ mod test {
                 Mnemonic::mnemonic(data.as_slice()).unwrap().to_string()
             );
             assert_eq!(mnemonic.data().unwrap(), data);
-            assert_eq!(seed.data(), decode(values[2].as_string().unwrap()).unwrap());
+            assert_eq!(seed.data(), hex::decode(values[2].as_string().unwrap()).unwrap());
 
             if values.len() == 4 {
                 let pk = values[3].as_string().unwrap();

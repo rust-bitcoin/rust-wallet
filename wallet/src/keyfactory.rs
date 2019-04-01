@@ -17,14 +17,13 @@
 //!
 //! TREZOR compatible key derivation
 //!
+
 use bitcoin::network::constants::Network;
-use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
+use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey, ChildNumber};
 use secp256k1::Secp256k1;
-use super::error::WalletError;
-use crypto::pbkdf2::pbkdf2;
-use crypto::hmac::Hmac;
-use crypto::sha2::Sha512;
 use rand::{rngs::OsRng, RngCore};
+
+use super::error::WalletError;
 use super::mnemonic::Mnemonic;
 
 /// a fabric of keys
@@ -49,7 +48,7 @@ impl KeyFactory {
             let key = KeyFactory::master_private_key(network, &seed)?;
             return Ok((key, mnemonic, encrypted));
         }
-        Err(WalletError::Generic("can not obtain random source"))
+        Err(WalletError::CannotObtainRandomSource)
     }
 
     /// decrypt stored master key
@@ -71,8 +70,7 @@ impl KeyFactory {
         salt: &str,
     ) -> Result<ExtendedPrivKey, WalletError> {
         let seed = Seed::new(&mnemonic, salt);
-        let key = KeyFactory::master_private_key(network, &seed)?;
-        Ok(key)
+        KeyFactory::master_private_key(network, &seed)
     }
 
     /// create a master private key from seed
@@ -80,10 +78,8 @@ impl KeyFactory {
         network: Network,
         seed: &Seed,
     ) -> Result<ExtendedPrivKey, WalletError> {
-        Ok(ExtendedPrivKey::new_master(
-            network,
-            &seed.0,
-        )?)
+        ExtendedPrivKey::new_master(network, &seed.0)
+            .map_err(WalletError::KeyDerivation)
     }
 
     /// get extended public key for a known private key
@@ -95,7 +91,8 @@ impl KeyFactory {
         extended_private_key: &ExtendedPrivKey,
         child: ChildNumber,
     ) -> Result<ExtendedPrivKey, WalletError> {
-        Ok(extended_private_key.ckd_priv(&Secp256k1::new(), child)?)
+        extended_private_key.ckd_priv(&Secp256k1::new(), child)
+            .map_err(WalletError::KeyDerivation)
     }
 
     pub fn public_child(
@@ -103,7 +100,8 @@ impl KeyFactory {
         extended_public_key: &ExtendedPubKey,
         child: ChildNumber,
     ) -> Result<ExtendedPubKey, WalletError> {
-        Ok(extended_public_key.ckd_pub(&Secp256k1::new(), child)?)
+        extended_public_key.ckd_pub(&Secp256k1::new(), child)
+            .map_err(WalletError::KeyDerivation)
     }
 }
 
@@ -116,6 +114,7 @@ pub enum MasterKeyEntropy {
 
 pub struct Seed(Vec<u8>);
 
+#[cfg(test)]
 impl Seed {
     // return a copy of the seed data
     pub fn data(&self) -> Vec<u8> {
@@ -126,10 +125,14 @@ impl Seed {
 impl Seed {
     /// create a seed from mnemonic (optionally with salt)
     pub fn new(mnemonic: &Mnemonic, salt: &str) -> Seed {
+        use crypto::pbkdf2;
+        use crypto::hmac::Hmac;
+        use crypto::sha2::Sha512;
+
         let mut mac = Hmac::new(Sha512::new(), mnemonic.to_string().as_bytes());
         let mut output = [0u8; 64];
         let msalt = "mnemonic".to_owned() + salt;
-        pbkdf2(&mut mac, msalt.as_bytes(), 2048, &mut output);
+        pbkdf2::pbkdf2(&mut mac, msalt.as_bytes(), 2048, &mut output);
         Seed(output.to_vec())
     }
 }
@@ -142,11 +145,7 @@ mod test {
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
     use crate::keyfactory::Seed;
-
-    extern crate rustc_serialize;
-    extern crate hex;
-    use self::rustc_serialize::json::Json;
-    use self::hex::decode;
+    use rustc_serialize::json::Json;
 
     #[test]
     fn bip32_tests() {
@@ -158,7 +157,7 @@ mod test {
         let json = Json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
         for test in tests {
-            let seed = Seed(decode(test["seed"].as_string().unwrap()).unwrap());
+            let seed = Seed(hex::decode(test["seed"].as_string().unwrap()).unwrap());
             let master_private =
                 super::KeyFactory::master_private_key(Network::Bitcoin, &seed).unwrap();
             assert_eq!(
