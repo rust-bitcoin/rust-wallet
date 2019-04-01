@@ -40,8 +40,8 @@ pub trait Wallet {
         amt: u64,
         submit: bool,
     ) -> Result<Transaction, Box<dyn Error>>;
-    fn publish_tx(&mut self, tx: &Transaction);
-    fn sync_with_tip(&mut self);
+    fn publish_tx(&mut self, tx: &Transaction) -> Result<(), Box<dyn Error>>;
+    fn sync_with_tip(&mut self) -> Result<(), Box<dyn Error>>;
 }
 
 pub trait WalletLibraryInterface {
@@ -75,8 +75,10 @@ pub trait WalletLibraryInterface {
 }
 
 pub trait BlockChainIO {
-    fn get_block_count(&self) -> u32;
-    fn get_block_hash(&self, height: u32) -> Sha256dHash;
-    fn get_block(&self, header_hash: &Sha256dHash) -> Block;
-    fn send_raw_transaction(&self, tx: &Transaction);
+    type Error: Error + 'static;
+
+    fn get_block_count(&self) -> Result<u32, Self::Error>;
+    fn get_block_hash(&self, height: u32) -> Result<Sha256dHash, Self::Error>;
+    fn get_block(&self, header_hash: &Sha256dHash) -> Result<Block, Self::Error>;
+    fn send_raw_transaction(&self, tx: &Transaction) -> Result<Sha256dHash, Self::Error>;
 }

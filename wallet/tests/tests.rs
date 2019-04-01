@@ -140,7 +140,7 @@ fn generate_money_for_wallet(
             ELECTRUMX_SERVER_SYNC_WITH_BLOCKCHAIN_DELAY_MS,
         ));
     }
-    af.sync_with_tip();
+    af.sync_with_tip().unwrap();
     assert_eq!(af.wallet_lib().wallet_balance(), 600_000_000);
 }
 
@@ -193,11 +193,11 @@ fn sanity_check(provider: BlockChainProvider) {
     // initialize wallet with blockchain source
     let mut wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 WalletConfig::with_db_path(tmp_db_path()),
                 bio,
@@ -233,7 +233,7 @@ fn sanity_check(provider: BlockChainProvider) {
             ELECTRUMX_SERVER_SYNC_WITH_BLOCKCHAIN_DELAY_MS,
         ));
     }
-    wallet.sync_with_tip();
+    wallet.sync_with_tip().unwrap();
     assert_eq!(wallet.wallet_lib().wallet_balance(), 100_000_000);
 
     if provider == BlockChainProvider::Electrumx {
@@ -264,11 +264,11 @@ fn base_wallet_functionality(provider: BlockChainProvider) {
     // initialize wallet with blockchain source and generated money
     let mut wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 WalletConfig::with_db_path(tmp_db_path()),
                 bio,
@@ -339,11 +339,11 @@ fn base_persistent_storage(provider: BlockChainProvider) {
         // additional scope destroys wallet object(aka wallet restart)
         let mut wallet: Box<dyn Wallet> = match provider {
             BlockChainProvider::TrustedFullNode => {
-                let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+                let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                     &cfg.url,
                     &cfg.user,
                     &cfg.password,
-                )));
+                ));
                 let (default_wallet, _) = WalletWithTrustedFullNode::new(
                     WalletConfig::with_db_path(db_path.clone()),
                     bio,
@@ -377,18 +377,18 @@ fn base_persistent_storage(provider: BlockChainProvider) {
                 ELECTRUMX_SERVER_SYNC_WITH_BLOCKCHAIN_DELAY_MS,
             ));
         }
-        wallet.sync_with_tip();
+        wallet.sync_with_tip().unwrap();
         assert_eq!(wallet.wallet_lib().wallet_balance(), 100_000_000);
     }
 
     // recover wallet's state from persistent storage
     let mut wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 WalletConfig::with_db_path(db_path.clone()),
                 bio,
@@ -426,7 +426,7 @@ fn base_persistent_storage(provider: BlockChainProvider) {
             ELECTRUMX_SERVER_SYNC_WITH_BLOCKCHAIN_DELAY_MS,
         ));
     }
-    wallet.sync_with_tip();
+    wallet.sync_with_tip().unwrap();
     assert_eq!(wallet.wallet_lib().wallet_balance(), 200_000_000);
 
     if provider == BlockChainProvider::Electrumx {
@@ -461,11 +461,11 @@ fn extended_persistent_storage(provider: BlockChainProvider) {
         // additional scope destroys wallet object(aka wallet restart)
         let mut wallet: Box<dyn Wallet> = match provider {
             BlockChainProvider::TrustedFullNode => {
-                let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+                let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                     &cfg.url,
                     &cfg.user,
                     &cfg.password,
-                )));
+                ));
                 let (default_wallet, _) = WalletWithTrustedFullNode::new(
                     WalletConfig::with_db_path(db_path.clone()),
                     bio,
@@ -491,11 +491,11 @@ fn extended_persistent_storage(provider: BlockChainProvider) {
         // additional scope destroys wallet object(aka wallet restart)
         let mut wallet: Box<dyn Wallet> = match provider {
             BlockChainProvider::TrustedFullNode => {
-                let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+                let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                     &cfg.url,
                     &cfg.user,
                     &cfg.password,
-                )));
+                ));
                 let (default_wallet, _) = WalletWithTrustedFullNode::new(
                     WalletConfig::with_db_path(db_path.clone()),
                     bio,
@@ -552,7 +552,7 @@ fn extended_persistent_storage(provider: BlockChainProvider) {
             wallet.reconnect();
         }
 
-        wallet.sync_with_tip();
+        wallet.sync_with_tip().unwrap();
 
         // wallet send money to itself, so balance decreased only by fee
         assert_eq!(wallet.wallet_lib().wallet_balance(), 600_000_000 - 10_000);
@@ -561,11 +561,11 @@ fn extended_persistent_storage(provider: BlockChainProvider) {
     // recover wallet's state from persistent storage
     let wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 WalletConfig::with_db_path(db_path),
                 bio,
@@ -619,11 +619,11 @@ fn restore_from_mnemonic(provider: BlockChainProvider) {
         // additional scope destroys wallet object(aka wallet restart)
         let (mut wallet, mnemonic): (Box<dyn Wallet>, Mnemonic) = match provider {
             BlockChainProvider::TrustedFullNode => {
-                let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+                let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                     &cfg.url,
                     &cfg.user,
                     &cfg.password,
-                )));
+                ));
                 let (default_wallet, mnemonic) = WalletWithTrustedFullNode::new(
                     WalletConfig::with_db_path(db_path.clone()),
                     bio,
@@ -660,11 +660,11 @@ fn restore_from_mnemonic(provider: BlockChainProvider) {
     );
     let mut wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 wc,
                 bio,
@@ -699,7 +699,7 @@ fn restore_from_mnemonic(provider: BlockChainProvider) {
             ELECTRUMX_SERVER_SYNC_WITH_BLOCKCHAIN_DELAY_MS,
         ));
     }
-    wallet.sync_with_tip();
+    wallet.sync_with_tip().unwrap();
     assert_eq!(wallet.wallet_lib().wallet_balance(), 700_000_000);
 
     if provider == BlockChainProvider::Electrumx {
@@ -730,11 +730,11 @@ fn make_tx_call(provider: BlockChainProvider) {
     // initialize wallet with blockchain source and generated money
     let mut wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 WalletConfig::with_db_path(tmp_db_path()),
                 bio,
@@ -793,7 +793,7 @@ fn make_tx_call(provider: BlockChainProvider) {
         wallet.reconnect();
     }
 
-    wallet.sync_with_tip();
+    wallet.sync_with_tip().unwrap();
 
     // wallet send money to itself, so balance decreased only by fee
     assert_eq!(wallet.wallet_lib().wallet_balance(), 600_000_000 - 10_000);
@@ -834,11 +834,11 @@ fn send_coins_call(provider: BlockChainProvider) {
     // initialize wallet with blockchain source and generated money
     let mut wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 WalletConfig::with_db_path(tmp_db_path()),
                 bio,
@@ -893,7 +893,7 @@ fn send_coins_call(provider: BlockChainProvider) {
         wallet.reconnect();
     }
 
-    wallet.sync_with_tip();
+    wallet.sync_with_tip().unwrap();
 
     // wallet send money to itself, so balance decreased only by fee
     assert_eq!(wallet.wallet_lib().wallet_balance(), 600_000_000 - 10_000);
@@ -934,11 +934,11 @@ fn lock_coins_flag_success(provider: BlockChainProvider) {
     // initialize wallet with blockchain source and generated money
     let mut wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 WalletConfig::with_db_path(tmp_db_path()),
                 bio,
@@ -981,7 +981,7 @@ fn lock_coins_flag_success(provider: BlockChainProvider) {
     let (tx, _) = wallet
         .send_coins(dest_addr, 200_000_000 - 10_000, true, false, false)
         .unwrap();
-    wallet.publish_tx(&tx);
+    wallet.publish_tx(&tx).unwrap();
 
     if provider == BlockChainProvider::Electrumx {
         electrs_process.unwrap().kill().unwrap();
@@ -1011,11 +1011,11 @@ fn lock_coins_flag_fail(provider: BlockChainProvider) {
     // initialize wallet with blockchain source and generated money
     let mut wallet: Box<dyn Wallet> = match provider {
         BlockChainProvider::TrustedFullNode => {
-            let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+            let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                 &cfg.url,
                 &cfg.user,
                 &cfg.password,
-            )));
+            ));
             let (default_wallet, _) = WalletWithTrustedFullNode::new(
                 WalletConfig::with_db_path(tmp_db_path()),
                 bio,

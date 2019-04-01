@@ -225,9 +225,10 @@ impl Wallet for WalletImpl {
     ) -> grpc::SingleResponse<SyncWithTipResponse> {
         info!("manual(not ZMQ) sync with tip was requested");
 
-        let resp = SyncWithTipResponse::new();
-        self.af.lock().unwrap().sync_with_tip();
-        grpc::SingleResponse::completed(resp)
+        let resp = self.af.lock().unwrap()
+            .sync_with_tip()
+            .map(|()| SyncWithTipResponse::new());
+        grpc_error(resp)
     }
 
     fn make_tx(

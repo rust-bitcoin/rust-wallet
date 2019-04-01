@@ -125,11 +125,11 @@ fn main() {
         println!("{}", mnemonic.to_string());
         Box::new(electrumx_wallet)
     } else {
-        let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+        let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
             &cfg.url,
             &cfg.user,
             &cfg.password,
-        )));
+        ));
         let (default_wallet, mnemonic) = WalletWithTrustedFullNode::new(
             wc,
             bio,

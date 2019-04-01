@@ -22,12 +22,18 @@ use super::error::WalletError;
 use super::mnemonic::Mnemonic;
 
 // a factory for TREZOR (BIP44) compatible accounts
-pub struct WalletWithTrustedFullNode {
+pub struct WalletWithTrustedFullNode<IO>
+where
+    IO: BlockChainIO,
+{
     pub wallet_lib: Box<dyn WalletLibraryInterface + Send>,
-    bio: Box<dyn BlockChainIO + Send>,
+    bio: IO,
 }
 
-impl Wallet for WalletWithTrustedFullNode {
+impl<IO> Wallet for WalletWithTrustedFullNode<IO>
+where
+    IO: BlockChainIO,
+{
     fn wallet_lib(&self) -> &Box<dyn WalletLibraryInterface + Send> {
         &self.wallet_lib
     }
@@ -50,7 +56,7 @@ impl Wallet for WalletWithTrustedFullNode {
             .wallet_lib
             .send_coins(addr_str, amt, lock_coins, witness_only)?;
         if submit {
-            self.bio.send_raw_transaction(&tx);
+            self.bio.send_raw_transaction(&tx)?;
         }
         Ok((tx, lock_id))
     }
@@ -64,30 +70,36 @@ impl Wallet for WalletWithTrustedFullNode {
     ) -> Result<Transaction, Box<dyn Error>> {
         let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
         if submit {
-            self.bio.send_raw_transaction(&tx);
+            self.bio.send_raw_transaction(&tx)?;
         }
         Ok(tx)
     }
 
-    fn publish_tx(&mut self, tx: &Transaction) {
-        self.bio.send_raw_transaction(tx);
+    fn publish_tx(&mut self, tx: &Transaction) -> Result<(), Box<dyn Error>> {
+        self.bio.send_raw_transaction(tx)?;
+        Ok(())
     }
 
-    fn sync_with_tip(&mut self) {
-        let block_height = self.bio.get_block_count();
+    fn sync_with_tip(&mut self) -> Result<(), Box<dyn Error>> {
+        let block_height = self.bio.get_block_count()?;
 
         let start_from = self.wallet_lib.get_last_seen_block_height_from_memory() + 1;
-        self.process_block_range(start_from, block_height as usize);
+        self.process_block_range(start_from, block_height as usize)?;
+
+        Ok(())
     }
 }
 
-impl WalletWithTrustedFullNode {
+impl<IO> WalletWithTrustedFullNode<IO>
+where
+    IO: BlockChainIO,
+{
     /// initialize with new random master key
     pub fn new(
         wc: WalletConfig,
-        bio: Box<dyn BlockChainIO + Send>,
+        bio: IO,
         mode: WalletLibraryMode,
-    ) -> Result<(WalletWithTrustedFullNode, Mnemonic), WalletError> {
+    ) -> Result<(Self, Mnemonic), WalletError> {
         let (wallet_lib, mnemonic) = WalletLibrary::new(wc, mode).unwrap();
 
         Ok((
@@ -111,11 +123,13 @@ impl WalletWithTrustedFullNode {
             .update_last_seen_block_height_in_db(block_height);
     }
 
-    fn process_block_range(&mut self, left: usize, right: usize) {
+    fn process_block_range(&mut self, left: usize, right: usize) -> Result<(), IO::Error> {
         for i in left..right + 1 {
-            let block_hash = self.bio.get_block_hash(i as u32);
-            let block = self.bio.get_block(&block_hash);
+            let block_hash = self.bio.get_block_hash(i as u32)?;
+            let block = self.bio.get_block(&block_hash)?;
             self.process_block(i, &block);
         }
+
+        Ok(())
     }
 }

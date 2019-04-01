@@ -68,11 +68,11 @@ fn launch_server_and_wait_new(
     thread::spawn(move || {
         let wallet: Box<dyn Wallet + Send> = match provider_copy {
             BlockChainProvider::TrustedFullNode => {
-                let bio = Box::new(BitcoinCoreIO::new(BitcoinCoreClient::new(
+                let bio = BitcoinCoreIO::new(BitcoinCoreClient::new(
                     &cfg.url,
                     &cfg.user,
                     &cfg.password,
-                )));
+                ));
                 let (default_wallet, _) =
                     WalletWithTrustedFullNode::new(WalletConfig::with_db_path(db_path), bio, mode)
                         .unwrap();

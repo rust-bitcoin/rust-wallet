@@ -62,7 +62,7 @@ impl Wallet for ElectrumxWallet {
             .wallet_lib
             .send_coins(addr_str, amt, lock_coins, witness_only)?;
         if submit {
-            self.publish_tx(&tx);
+            self.publish_tx(&tx)?;
         }
         Ok((tx, lock_id))
     }
@@ -76,23 +76,24 @@ impl Wallet for ElectrumxWallet {
     ) -> Result<Transaction, Box<dyn Error>> {
         let tx = self.wallet_lib.make_tx(ops, addr_str, amt).unwrap();
         if submit {
-            self.publish_tx(&tx);
+            self.publish_tx(&tx)?;
         }
         Ok(tx)
     }
 
-    fn publish_tx(&mut self, tx: &Transaction) {
+    fn publish_tx(&mut self, tx: &Transaction) -> Result<(), Box<dyn Error>> {
         let tx = serialize_hex(tx);
-        self.electrumx_client.broadcast_transaction(tx).unwrap();
+        self.electrumx_client.broadcast_transaction(tx)?;
+        Ok(())
     }
 
     // TODO(evg): something better?
-    fn sync_with_tip(&mut self) {
+    fn sync_with_tip(&mut self) -> Result<(), Box<dyn Error>> {
         println!("******** SYNC_WITH_TIP_BEGIN ********");
         let mut all_wallet_related_txs = Vec::new();
         let btc_address_list = self.wallet_lib.get_full_address_list();
         for btc_address in btc_address_list {
-            let history = self.electrumx_client.get_history(&btc_address).unwrap();
+            let history = self.electrumx_client.get_history(&btc_address)?;
             for resp in history {
                 all_wallet_related_txs.push((resp.height, resp.tx_hash))
             }
@@ -116,8 +117,7 @@ impl Wallet for ElectrumxWallet {
             let tx_hash = wallet_related_tx.1;
             let tx_hex = self
                 .electrumx_client
-                .get_transaction(tx_hash.clone(), false, false)
-                .unwrap();
+                .get_transaction(tx_hash.clone(), false, false)?;
             let tx = hex::decode(tx_hex).unwrap();
 
             let tx: Transaction = deserialize(&tx).unwrap();
@@ -127,6 +127,8 @@ impl Wallet for ElectrumxWallet {
             to_skip.insert(tx_hash, ());
         }
         println!("******** SYNC_WITH_TIP_END ********\n\n\n");
+
+        Ok(())
     }
 }
 

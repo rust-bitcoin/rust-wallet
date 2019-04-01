@@ -369,6 +369,7 @@ mod test {
         Block, Transaction,
     };
     use bitcoin_hashes::sha256d::Hash as Sha256dHash;
+    use std::{fmt, error::Error};
 
     use crate::walletlibrary::{WalletConfigBuilder, WalletLibraryMode, KeyGenConfig};
     use crate::default::WalletWithTrustedFullNode;
@@ -377,21 +378,38 @@ mod test {
 
     struct FakeBlockChainIO;
 
+    #[derive(Debug)]
+    struct FakeBlockChainIoError;
+
+    impl fmt::Display for FakeBlockChainIoError {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "")
+        }
+    }
+
+    impl Error for FakeBlockChainIoError {
+    }
+
     impl BlockChainIO for FakeBlockChainIO {
-        fn get_block_count(&self) -> u32 {
-            unimplemented!()
+        type Error = FakeBlockChainIoError;
+
+        fn get_block_count(&self) -> Result<u32, Self::Error> {
+            Err(FakeBlockChainIoError)
         }
-        #[allow(unused_variables)]
-        fn get_block_hash(&self, height: u32) -> Sha256dHash {
-            unimplemented!()
+
+        fn get_block_hash(&self, height: u32) -> Result<Sha256dHash, Self::Error> {
+            let _ = height;
+            Err(FakeBlockChainIoError)
         }
-        #[allow(unused_variables)]
-        fn get_block(&self, header_hash: &Sha256dHash) -> Block {
-            unimplemented!()
+
+        fn get_block(&self, header_hash: &Sha256dHash) -> Result<Block, Self::Error> {
+            let _ = header_hash;
+            Err(FakeBlockChainIoError)
         }
-        #[allow(unused_variables)]
-        fn send_raw_transaction(&self, tx: &Transaction) {
-            unimplemented!()
+
+        fn send_raw_transaction(&self, tx: &Transaction) -> Result<Sha256dHash, Self::Error> {
+            let _ = tx;
+            Err(FakeBlockChainIoError)
         }
     }
 
@@ -422,7 +440,7 @@ mod test {
             .finalize();
         let (mut af, _) = WalletWithTrustedFullNode::new(
             wc,
-            Box::new(FakeBlockChainIO),
+            FakeBlockChainIO,
             WalletLibraryMode::Create(KeyGenConfig::debug()),
         )
         .unwrap();
@@ -463,7 +481,7 @@ mod test {
             .finalize();
         let (mut af, _) = WalletWithTrustedFullNode::new(
             wc,
-            Box::new(FakeBlockChainIO),
+            FakeBlockChainIO,
             WalletLibraryMode::Create(KeyGenConfig::debug()),
         )
         .unwrap();

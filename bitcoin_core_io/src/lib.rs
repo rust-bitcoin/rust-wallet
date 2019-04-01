@@ -17,8 +17,40 @@ use bitcoin::{
     Block, BlockHeader, Transaction,
 };
 use bitcoin_hashes::sha256d::Hash as Sha256dHash;
-use bitcoin_rpc_client::{BitcoinCoreClient, BitcoinRpcApi, rpc::SerializedRawTransaction};
+use bitcoin_rpc_client::{
+    BitcoinCoreClient, BitcoinRpcApi,
+    rpc::SerializedRawTransaction, RpcError, ClientError,
+};
 use wallet::interface::BlockChainIO;
+use std::{fmt, error::Error};
+
+#[derive(Debug)]
+pub enum BitcoinCoreIoError {
+    ClientError(ClientError),
+    RpcError(RpcError),
+}
+
+impl fmt::Display for BitcoinCoreIoError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &BitcoinCoreIoError::ClientError(ref e) => write!(f, "{:?}", e),
+            &BitcoinCoreIoError::RpcError(ref e) => write!(f, "{:?}", e),
+        }
+    }
+}
+
+impl Error for BitcoinCoreIoError {
+}
+
+impl BitcoinCoreIoError {
+    fn flatten<T>(r: Result<Result<T, RpcError>, ClientError>) -> Result<T, Self> {
+        match r {
+            Ok(Ok(t)) => Ok(t),
+            Err(a) => Err(BitcoinCoreIoError::ClientError(a)),
+            Ok(Err(b)) => Err(BitcoinCoreIoError::RpcError(b)),
+        }
+    }
+}
 
 pub struct BitcoinCoreIO(BitcoinCoreClient);
 
@@ -29,18 +61,22 @@ impl BitcoinCoreIO {
 }
 
 impl BlockChainIO for BitcoinCoreIO {
-    fn get_block_count(&self) -> u32 {
-        self.0.get_block_count().unwrap().unwrap().into()
+    type Error = BitcoinCoreIoError;
+
+    fn get_block_count(&self) -> Result<u32, Self::Error> {
+        Self::Error::flatten(self.0.get_block_count()).map(Into::into)
     }
 
-    fn get_block_hash(&self, height: u32) -> Sha256dHash {
-        self.0.get_block_hash(height).unwrap().unwrap()
+    fn get_block_hash(&self, height: u32) -> Result<Sha256dHash, Self::Error> {
+        Self::Error::flatten(self.0.get_block_hash(height))
     }
 
-    fn get_block(&self, header_hash: &Sha256dHash) -> Block {
+    fn get_block(&self, header_hash: &Sha256dHash) -> Result<Block, Self::Error> {
         use bitcoin_hashes::hex::FromHex;
 
-        let block = self.0.get_block(header_hash).unwrap().unwrap();
+        let &BitcoinCoreIO(ref client) = self;
+
+        let block = Self::Error::flatten(client.get_block(header_hash))?;
 
         // TODO(evg): review it
         let header = BlockHeader {
@@ -53,22 +89,17 @@ impl BlockChainIO for BitcoinCoreIO {
         };
         let mut txdata = Vec::new();
         for txid in &block.tx {
-            let tx_hex = self
-                .0
-                .get_raw_transaction_serialized(&txid)
-                .unwrap()
-                .unwrap();
-            let tx: Transaction = tx_hex.into();
-            txdata.push(tx);
+            let tx_hex = client
+                .get_raw_transaction_serialized(&txid);
+            txdata.push(Self::Error::flatten(tx_hex)?.into());
         }
 
-        Block { header, txdata }
+        Ok(Block { header, txdata })
     }
 
-    fn send_raw_transaction(&self, tx: &Transaction) {
-        self.0
-            .send_raw_transaction(SerializedRawTransaction::from(tx.clone()))
-            .unwrap()
-            .unwrap();
+    fn send_raw_transaction(&self, tx: &Transaction) -> Result<Sha256dHash, Self::Error> {
+        let v = self.0
+            .send_raw_transaction(SerializedRawTransaction::from(tx.clone()));
+        Self::Error::flatten(v)
     }
 }
