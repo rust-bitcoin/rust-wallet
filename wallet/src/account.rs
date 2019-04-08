@@ -59,7 +59,7 @@ impl<'a> From<&'a str> for AccountAddressType {
             "p2pkh" => AccountAddressType::P2PKH,
             "p2shwh" => AccountAddressType::P2SHWH,
             "p2wkh" => AccountAddressType::P2WKH,
-            _ => unreachable!(),
+            _ => panic!("unknown address type: {}", addr_type),
         }
     }
 }
