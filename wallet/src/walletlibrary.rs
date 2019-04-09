@@ -477,6 +477,14 @@ impl WalletLibraryInterface for WalletLibrary {
         Ok(tx)
     }
 
+    fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
+        match address_type {
+            AccountAddressType::P2PKH => &mut self.p2pkh_account,
+            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
+            AccountAddressType::P2WKH => &mut self.p2wkh_account,
+        }
+    }
+
     fn get_last_seen_block_height_from_memory(&self) -> usize {
         self.last_seen_block_height
     }
@@ -492,14 +500,6 @@ impl WalletLibraryInterface for WalletLibrary {
             .put_last_seen_block_height(block_height as u32);
     }
 
-    fn get_account_mut(&mut self, address_type: AccountAddressType) -> &mut Account {
-        match address_type {
-            AccountAddressType::P2PKH => &mut self.p2pkh_account,
-            AccountAddressType::P2SHWH => &mut self.p2shwh_account,
-            AccountAddressType::P2WKH => &mut self.p2wkh_account,
-        }
-    }
-
     fn get_full_address_list(&self) -> Vec<String> {
         [
             self.p2pkh_account.btc_address_list.clone(),
@@ -510,32 +510,30 @@ impl WalletLibraryInterface for WalletLibrary {
     }
 
     fn process_tx(&mut self, tx: &Transaction) {
-        let account_list = &mut [
-            &mut self.p2pkh_account,
-            &mut self.p2shwh_account,
-            &mut self.p2wkh_account,
-        ];
-
-        for input_index in 0..tx.input.len() {
-            let input = &tx.input[input_index];
+        for input in &tx.input {
             if self.op_to_utxo.contains_key(&input.previous_output) {
-                {
-                    // remove from account utxo map
-                    let utxo = self.op_to_utxo.get(&input.previous_output).unwrap();
-                    let acc = &mut account_list[usize::from(utxo.addr_type.clone())];
-                    let utxo_map = &mut acc.utxo_list;
-                    utxo_map.remove(&input.previous_output).unwrap();
+                let (addr_type_to_remove, out_point_to_remove) = {
+                    let utxo = &self.op_to_utxo[&input.previous_output];
+                    (utxo.addr_type.clone(), utxo.out_point)
+                };
 
-                    self.db.write().unwrap().delete_utxo(&utxo.out_point);
-                }
+                // remove from account utxo map
+                let acc = self.get_account_mut(addr_type_to_remove);
+                acc.utxo_list.remove(&input.previous_output).unwrap();
+
+                self.db.write().unwrap().delete_utxo(&out_point_to_remove);
 
                 // remove from account_factory utxo_map
                 self.op_to_utxo.remove(&input.previous_output).unwrap();
             }
         }
-        for account_index in 0..account_list.len() {
-            let account = &mut account_list[account_index];
 
+        let mut account_list = [
+            &mut self.p2pkh_account,
+            &mut self.p2shwh_account,
+            &mut self.p2wkh_account,
+        ];
+        for (account_index, account) in account_list.iter_mut().enumerate() {
             for output_index in 0..tx.output.len() {
                 let output = &tx.output[output_index];
                 let actual = &output.script_pubkey.to_bytes();
