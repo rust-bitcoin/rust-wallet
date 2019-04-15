@@ -248,11 +248,11 @@ pub struct WalletLibrary {
     #[allow(dead_code)]
     network: Network,
 
-    pub last_seen_block_height: usize,
+    last_seen_block_height: usize,
     op_to_utxo: HashMap<OutPoint, Utxo>,
     next_lock_id: LockId,
     locked_coins: LockGroupMap,
-    pub db: Arc<RwLock<DB>>,
+    db: Arc<RwLock<DB>>,
 }
 
 impl WalletLibraryInterface for WalletLibrary {
