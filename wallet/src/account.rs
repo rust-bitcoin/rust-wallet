@@ -19,7 +19,7 @@
 //!
 use bitcoin::{
     util::{
-        bip32::{ExtendedPubKey, ExtendedPrivKey, ChildNumber},
+        bip32::{ExtendedPubKey, ExtendedPrivKey, ChildNumber, Error as Bip32Error},
         address::Address,
     },
     blockdata::{
@@ -37,7 +37,6 @@ use super::DB;
 
 use std::{
     sync::{Arc, RwLock},
-    error::Error,
     collections::HashMap,
 };
 
@@ -80,7 +79,7 @@ impl Into<AccountAddressType> for usize {
             0 => AccountAddressType::P2PKH,
             1 => AccountAddressType::P2SHWH,
             2 => AccountAddressType::P2WKH,
-            _ => unreachable!(),
+            _ => panic!("unknown address code: {}", self),
         }
     }
 }
@@ -89,15 +88,6 @@ impl Into<AccountAddressType> for usize {
 pub enum AddressChain {
     External,
     Internal,
-}
-
-impl From<AddressChain> for usize {
-    fn from(val: AddressChain) -> usize {
-        match val {
-            AddressChain::External => 0,
-            AddressChain::Internal => 1,
-        }
-    }
 }
 
 impl Into<u32> for AddressChain {
@@ -143,7 +133,7 @@ impl Utxo {
         pk_script: Script,
         addr_type: AccountAddressType,
     ) -> Self {
-        Self {
+        Utxo {
             value,
             key_path,
             out_point,
@@ -180,7 +170,7 @@ pub struct SecretKeyHelper {
 
 impl SecretKeyHelper {
     fn new(addr_type: AccountAddressType, addr_chain: AddressChain, index: u32) -> Self {
-        Self {
+        SecretKeyHelper {
             addr_type,
             addr_chain,
             index,
@@ -237,7 +227,7 @@ impl Account {
         &self.utxo_list
     }
 
-    pub fn next_external_pk(&mut self) -> Result<PublicKey, Box<dyn Error>> {
+    pub fn next_external_pk(&mut self) -> Result<PublicKey, Bip32Error> {
         let path = &[
             ChildNumber::Normal { index: 0 }, // TODO(evg): use addr chain enum instead?
             ChildNumber::Normal {
@@ -265,7 +255,7 @@ impl Account {
         Ok(extended_pub_key.public_key)
     }
 
-    pub fn next_internal_pk(&mut self) -> Result<PublicKey, Box<dyn Error>> {
+    pub fn next_internal_pk(&mut self) -> Result<PublicKey, Bip32Error> {
         let path = &[
             ChildNumber::Normal { index: 1 },
             ChildNumber::Normal {
@@ -294,6 +284,21 @@ impl Account {
     }
 
     pub fn addr_from_pk(&self, pk: &PublicKey) -> String {
+        fn p2pkh_addr_from_public_key(pk: &PublicKey, network: Network) -> String {
+            let addr = Address::p2pkh(pk, network);
+            addr.to_string()
+        }
+
+        fn p2shwh_addr_from_public_key(pk: &PublicKey, network: Network) -> String {
+            let addr = Address::p2shwpkh(pk, network);
+            addr.to_string()
+        }
+
+        fn p2wkh_addr_from_public_key_bip0173(pk: &PublicKey, network: Network) -> String {
+            let addr = Address::p2wpkh(pk, network);
+            addr.to_string()
+        }
+
         match self.address_type {
             AccountAddressType::P2PKH => p2pkh_addr_from_public_key(pk, self.network),
             AccountAddressType::P2SHWH => p2shwh_addr_from_public_key(pk, self.network),
@@ -302,6 +307,21 @@ impl Account {
     }
 
     pub fn script_from_pk(&self, pk: &PublicKey) -> Script {
+        fn p2pkh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
+            let p2pkh_addr = Address::p2pkh(pk, network);
+            p2pkh_addr.script_pubkey()
+        }
+
+        fn p2shwh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
+            let addr = Address::p2shwpkh(pk, network);
+            addr.script_pubkey()
+        }
+
+        fn p2wkh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
+            let p2wkh_addr = Address::p2wpkh(pk, network);
+            p2wkh_addr.script_pubkey()
+        }
+
         match self.address_type {
             AccountAddressType::P2PKH => p2pkh_script_from_public_key(pk, self.network),
             AccountAddressType::P2SHWH => p2shwh_script_from_public_key(pk, self.network),
@@ -309,7 +329,7 @@ impl Account {
         }
     }
 
-    pub fn new_address(&mut self) -> Result<String, Box<dyn Error>> {
+    pub fn new_address(&mut self) -> Result<String, Bip32Error> {
         let pk = self.next_external_pk()?;
         let addr = self.addr_from_pk(&pk);
         self.btc_address_list.push(addr.clone());
@@ -320,7 +340,7 @@ impl Account {
         Ok(addr)
     }
 
-    pub fn new_change_address(&mut self) -> Result<String, Box<dyn Error>> {
+    pub fn new_change_address(&mut self) -> Result<String, Bip32Error> {
         let pk = self.next_internal_pk()?;
         let addr = self.addr_from_pk(&pk);
         self.btc_address_list.push(addr.clone());
@@ -332,42 +352,12 @@ impl Account {
     }
 }
 
-pub fn p2pkh_addr_from_public_key(pk: &PublicKey, network: Network) -> String {
-    let addr = Address::p2pkh(pk, network);
-    addr.to_string()
-}
-
-pub fn p2shwh_addr_from_public_key(pk: &PublicKey, network: Network) -> String {
-    let addr = Address::p2shwpkh(pk, network);
-    addr.to_string()
-}
-
-pub fn p2wkh_addr_from_public_key_bip0173(pk: &PublicKey, network: Network) -> String {
-    let addr = Address::p2wpkh(pk, network);
-    addr.to_string()
-}
-
-pub fn p2pkh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
-    let p2pkh_addr = Address::p2pkh(pk, network);
-    p2pkh_addr.script_pubkey()
-}
-
-pub fn p2shwh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
-    let addr = Address::p2shwpkh(pk, network);
-    addr.script_pubkey()
-}
-
-pub fn p2wkh_script_from_public_key(pk: &PublicKey, network: Network) -> Script {
-    let p2wkh_addr = Address::p2wpkh(pk, network);
-    p2wkh_addr.script_pubkey()
-}
-
 #[cfg(test)]
 mod test {
     use bitcoin::{
         network::constants::Network,
         Block, Transaction,
-    };
+};
     use bitcoin_hashes::sha256d::Hash as Sha256dHash;
     use std::{fmt, error::Error};
 
@@ -387,8 +377,7 @@ mod test {
         }
     }
 
-    impl Error for FakeBlockChainIoError {
-    }
+    impl Error for FakeBlockChainIoError {}
 
     impl BlockChainIO for FakeBlockChainIO {
         type Error = FakeBlockChainIoError;
