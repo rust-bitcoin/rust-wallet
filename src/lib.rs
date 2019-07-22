@@ -17,6 +17,12 @@ extern crate crypto;
 extern crate secp256k1;
 extern crate bitcoin;
 extern crate rand;
+#[cfg(test)]
+extern crate hex;
+#[cfg(test)]
+extern crate serde;
+#[cfg(test)]
+extern crate serde_json;
 
 pub mod mnemonic;
 pub mod error;

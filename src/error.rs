@@ -53,7 +53,7 @@ impl Error for WalletError {
         }
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         match *self {
             WalletError::Generic(_) => None,
             WalletError::IO(ref err) => Some(err),
@@ -81,7 +81,7 @@ impl fmt::Display for WalletError {
 
 impl fmt::Debug for WalletError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (self as &fmt::Display).fmt(f)
+        (self as &dyn fmt::Display).fmt(f)
     }
 }
 

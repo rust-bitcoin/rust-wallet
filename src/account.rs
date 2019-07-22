@@ -18,7 +18,7 @@
 //!
 //! TREZOR compatible accounts (BIP44)
 //!
-use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
+use bitcoin::util::bip32::{ExtendedPrivKey};
 use std::sync::Arc;
 use keyfactory::KeyFactory;
 

@@ -25,7 +25,7 @@ use error::WalletError;
 use crypto::pbkdf2::pbkdf2;
 use crypto::hmac::Hmac;
 use crypto::sha2::Sha512;
-use rand::{OsRng, RngCore};
+use rand::{thread_rng, RngCore};
 use mnemonic::Mnemonic;
 
 /// a fabric of keys
@@ -44,14 +44,12 @@ impl KeyFactory {
     /// create a new random master private key
     pub fn new_master_private_key (&self, entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str) -> Result<(ExtendedPrivKey, Mnemonic, Vec<u8>), WalletError> {
         let mut encrypted = vec!(0u8; entropy as usize);
-        if let Ok(mut rng) = OsRng::new() {
-            rng.fill_bytes(encrypted.as_mut_slice());
-            let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
-            let seed = Seed::new(&mnemonic, salt);
-            let key = self.master_private_key(network, &seed)?;
-            return Ok((key, mnemonic, encrypted))
-        }
-        Err(WalletError::Generic("can not obtain random source"))
+        let mut rng = thread_rng();
+        rng.fill_bytes(encrypted.as_mut_slice());
+        let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
+        let seed = Seed::new(&mnemonic, salt);
+        let key = self.master_private_key(network, &seed)?;
+        return Ok((key, mnemonic, encrypted))
     }
 
     /// create a master private key from seed
@@ -109,10 +107,8 @@ mod test {
     use bitcoin::util::bip32::ChildNumber;
     use keyfactory::Seed;
 
-    extern crate rustc_serialize;
-    extern crate hex;
-    use self::rustc_serialize::json::Json;
-    use self::hex::decode;
+    use serde_json::{Value};
+    use hex::decode;
 
     #[test]
     fn bip32_tests () {
@@ -123,18 +119,18 @@ mod test {
         let mut file = File::open(d).unwrap();
         let mut data = String::new();
         file.read_to_string(&mut data).unwrap();
-        let json = Json::from_str(&data).unwrap();
+        let json: Value = serde_json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
         for test in tests {
-            let seed = Seed(decode(test["seed"].as_string().unwrap()).unwrap());
+            let seed = Seed(decode(test["seed"].as_str().unwrap()).unwrap());
             let master_private = key_fabric.master_private_key(Network::Bitcoin, &seed).unwrap();
-            assert_eq!(test["private"].as_string().unwrap(), master_private.to_string());
-            assert_eq!(test["public"].as_string().unwrap(), key_fabric.extended_public_from_private(&master_private).to_string());
+            assert_eq!(test["private"].as_str().unwrap(), master_private.to_string());
+            assert_eq!(test["public"].as_str().unwrap(), key_fabric.extended_public_from_private(&master_private).to_string());
             for d in test["derived"].as_array().unwrap() {
                 let mut key = master_private.clone();
                 for l in d ["locator"].as_array().unwrap() {
                     let sequence = l ["sequence"].as_u64().unwrap();
-                    let private = l ["private"].as_boolean().unwrap();
+                    let private = l ["private"].as_bool().unwrap();
                     let child = if private {
                         ChildNumber::Hardened{index:sequence as u32}
                     } else {
@@ -142,8 +138,8 @@ mod test {
                     };
                     key = key_fabric.private_child(&key.clone(), child).unwrap();
                 }
-                assert_eq!(d ["private"].as_string().unwrap(), key.to_string());
-                assert_eq!(d ["public"].as_string().unwrap(), key_fabric.extended_public_from_private(&key).to_string());
+                assert_eq!(d ["private"].as_str().unwrap(), key.to_string());
+                assert_eq!(d ["public"].as_str().unwrap(), key_fabric.extended_public_from_private(&key).to_string());
             }
         }
     }
