@@ -27,7 +27,6 @@ use mnemonic::Mnemonic;
 use account::{Account,AccountAddressType};
 use std::sync::Arc;
 use std::time::SystemTime;
-use std::cmp::max;
 use std::collections::HashMap;
 
 // a factory for TREZOR (BIP44) compatible accounts
