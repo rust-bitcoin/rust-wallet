@@ -72,14 +72,15 @@ impl AccountFactory {
     /// get an account
     pub fn account (&self, account_number: u32, address_type: AccountAddressType) -> Result<Account, WalletError> {
         let mut key = match address_type {
-            AccountAddressType::P2PKH => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened(44))?,
-            AccountAddressType::P2SHWH => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened(49))?
+            AccountAddressType::P2PKH => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened{index:44})?,
+            AccountAddressType::P2SHWH => self.key_factory.private_child(&self.master_key, ChildNumber::Hardened{index:49})?
         };
         key = match key.network {
-            Network::Bitcoin => self.key_factory.private_child(&key, ChildNumber::Hardened(0))?,
-            Network::Testnet => self.key_factory.private_child(&key, ChildNumber::Hardened(1))?
+            Network::Bitcoin => self.key_factory.private_child(&key, ChildNumber::Hardened{index:0})?,
+            Network::Testnet => self.key_factory.private_child(&key, ChildNumber::Hardened{index:1})?,
+            Network::Regtest => self.key_factory.private_child(&key, ChildNumber::Hardened{index:1})?
         };
-        key = self.key_factory.private_child(&key, ChildNumber::Hardened(account_number))?;
+        key = self.key_factory.private_child(&key, ChildNumber::Hardened{index:account_number})?;
         Ok(Account::new(self.key_factory.clone(),key, address_type))
     }
 }

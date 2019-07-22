@@ -20,7 +20,7 @@
 //!
 use bitcoin::network::constants::Network;
 use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
-use secp256k1::Secp256k1;
+use secp256k1::{All,Secp256k1};
 use error::WalletError;
 use crypto::pbkdf2::pbkdf2;
 use crypto::hmac::Hmac;
@@ -30,7 +30,7 @@ use mnemonic::Mnemonic;
 
 /// a fabric of keys
 pub struct KeyFactory {
-    secp: Secp256k1
+    secp: Secp256k1<All>
 }
 
 impl KeyFactory {
@@ -56,7 +56,7 @@ impl KeyFactory {
 
     /// create a master private key from seed
     pub fn master_private_key(&self, network: Network, seed: &Seed) -> Result<ExtendedPrivKey, WalletError> {
-        Ok(ExtendedPrivKey::new_master (&self.secp, network, &seed.0)?)
+        Ok(ExtendedPrivKey::new_master (network, &seed.0)?)
     }
 
     /// get extended public key for a known private key
@@ -136,9 +136,9 @@ mod test {
                     let sequence = l ["sequence"].as_u64().unwrap();
                     let private = l ["private"].as_boolean().unwrap();
                     let child = if private {
-                        ChildNumber::Hardened(sequence as u32)
+                        ChildNumber::Hardened{index:sequence as u32}
                     } else {
-                        ChildNumber::Normal(sequence as u32)
+                        ChildNumber::Normal{index:sequence as u32}
                     };
                     key = key_fabric.private_child(&key.clone(), child).unwrap();
                 }

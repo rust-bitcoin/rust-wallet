@@ -11,8 +11,8 @@ keywords = [ "crypto", "bitcoin" ]
 readme = "README.md"
 
 [dependencies]
-bitcoin = "0.13"
-secp256k1 = "0.9"
+bitcoin = "0.18"
+secp256k1 = "0.12"
 rust-crypto = "0.2"
 log = "0.4"
 simple_logger = "0.5"
