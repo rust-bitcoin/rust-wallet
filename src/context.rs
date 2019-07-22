@@ -18,7 +18,10 @@
 //!
 //! TREZOR compatible key derivation
 //!
-use bitcoin::network::constants::Network;
+use bitcoin::{
+    PublicKey, PrivateKey,
+    network::constants::Network
+};
 use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
 use secp256k1::{All,Secp256k1};
 use error::WalletError;
@@ -28,15 +31,13 @@ use crypto::sha2::Sha512;
 use rand::{thread_rng, RngCore};
 use mnemonic::Mnemonic;
 
-/// a fabric of keys
-pub struct KeyFactory {
+pub struct SecpContext {
     secp: Secp256k1<All>
 }
 
-impl KeyFactory {
-    /// new key fabric
-    pub fn new() -> KeyFactory {
-        KeyFactory {
+impl SecpContext {
+    pub fn new() -> SecpContext {
+        SecpContext {
             secp: Secp256k1::new()
         }
     }
@@ -68,6 +69,10 @@ impl KeyFactory {
 
     pub fn public_child (&self, extended_public_key: &ExtendedPubKey, child: ChildNumber) -> Result<ExtendedPubKey, WalletError> {
         Ok(extended_public_key.ckd_pub(&self.secp, child)?)
+    }
+
+    pub fn public_from_private(&self, private: &PrivateKey) -> PublicKey {
+        PublicKey::from_private_key(&self.secp, private)
     }
 }
 
@@ -105,14 +110,14 @@ mod test {
     use std::io::Read;
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
-    use keyfactory::Seed;
+    use context::Seed;
 
     use serde_json::{Value};
     use hex::decode;
 
     #[test]
     fn bip32_tests () {
-        let key_fabric = super::KeyFactory::new();
+        let context = super::SecpContext::new();
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("tests/BIP32.json");
@@ -123,9 +128,9 @@ mod test {
         let tests = json.as_array().unwrap();
         for test in tests {
             let seed = Seed(decode(test["seed"].as_str().unwrap()).unwrap());
-            let master_private = key_fabric.master_private_key(Network::Bitcoin, &seed).unwrap();
+            let master_private = context.master_private_key(Network::Bitcoin, &seed).unwrap();
             assert_eq!(test["private"].as_str().unwrap(), master_private.to_string());
-            assert_eq!(test["public"].as_str().unwrap(), key_fabric.extended_public_from_private(&master_private).to_string());
+            assert_eq!(test["public"].as_str().unwrap(), context.extended_public_from_private(&master_private).to_string());
             for d in test["derived"].as_array().unwrap() {
                 let mut key = master_private.clone();
                 for l in d ["locator"].as_array().unwrap() {
@@ -136,10 +141,10 @@ mod test {
                     } else {
                         ChildNumber::Normal{index:sequence as u32}
                     };
-                    key = key_fabric.private_child(&key.clone(), child).unwrap();
+                    key = context.private_child(&key.clone(), child).unwrap();
                 }
                 assert_eq!(d ["private"].as_str().unwrap(), key.to_string());
-                assert_eq!(d ["public"].as_str().unwrap(), key_fabric.extended_public_from_private(&key).to_string());
+                assert_eq!(d ["public"].as_str().unwrap(), context.extended_public_from_private(&key).to_string());
             }
         }
     }

@@ -106,12 +106,12 @@ mod test {
     use std::fs::File;
     use std::path::PathBuf;
     use std::io::Read;
-    use keyfactory::Seed;
+    use context::Seed;
     use bitcoin::network::constants::Network;
 
     use serde_json::{Value};
     use hex::decode;
-    use keyfactory::KeyFactory;
+    use context::SecpContext;
 
     #[test]
     fn test_mnemonic () {
@@ -124,7 +124,7 @@ mod test {
         let json :Value = serde_json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
 
-        let mut key_factory: KeyFactory = KeyFactory::new();
+        let mut key_factory: SecpContext = SecpContext::new();
         let mut test_count = 0;
 
         for t in 0 .. tests.len() {
@@ -138,7 +138,7 @@ mod test {
             if values.len() == 4 {
                 let pk = values[3].as_str().unwrap();
 
-                let private_key = KeyFactory::master_private_key(&key_factory ,Network::Bitcoin, &seed).unwrap();
+                let private_key = SecpContext::master_private_key(&key_factory, Network::Bitcoin, &seed).unwrap();
                 let key = private_key.clone();
 
                 assert_eq!(key.to_string(), pk);

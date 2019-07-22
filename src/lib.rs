@@ -26,6 +26,6 @@ extern crate serde_json;
 
 pub mod mnemonic;
 pub mod error;
-pub mod keyfactory;
+pub mod context;
 pub mod accountfactory;
 pub mod account;
