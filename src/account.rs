@@ -28,7 +28,7 @@ use context::SecpContext;
 use error::WalletError;
 
 /// Address type an account is using
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AccountAddressType {
     /// pay to public key hash (aka. legacy)
     P2PKH,
@@ -60,6 +60,10 @@ impl Account {
             network
         };
         Ok(Account {context, key: key, address_type, birth, receive, change, network})
+    }
+
+    pub fn birth (&self) -> u64 {
+        self.birth
     }
 }
 
