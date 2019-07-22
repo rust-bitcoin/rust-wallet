@@ -51,7 +51,7 @@ impl Mnemonic {
     pub fn from (s : &str) -> Result<Mnemonic, WalletError> {
         let words : Vec<_> = s.split(' ').collect();
         if words.len () < 6 || words.len() % 6 != 0 {
-            return Err(WalletError::Generic("Mnemonic must have a word count divisible with 6"));
+            return Err(WalletError::Mnemonic("Mnemonic must have a word count divisible with 6"));
         }
         let mut mnemonic = Vec::new();
         for word in &words {
@@ -59,7 +59,7 @@ impl Mnemonic {
                 mnemonic.push(WORDS[idx]);
             }
             else {
-                return Err(WalletError::Generic("Mneminic contains an unknown word"));
+                return Err(WalletError::Mnemonic("Mnemonic contains an unknown word"));
             }
         }
         Ok(Mnemonic(mnemonic))
@@ -68,7 +68,7 @@ impl Mnemonic {
     // create a mnemonic for some data
     fn mnemonic (data: &[u8]) -> Result<Mnemonic, WalletError> {
         if data.len() % 4 != 0 {
-            return Err(WalletError::Generic("Data for mnemonic should have a length divisible by 4"));
+            return Err(WalletError::Mnemonic("Data for mnemonic should have a length divisible by 4"));
         }
         let mut check = [0u8; 32];
 
