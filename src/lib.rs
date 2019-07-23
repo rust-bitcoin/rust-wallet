@@ -19,6 +19,7 @@
 #![deny(non_snake_case)]
 #![deny(unused_mut)]
 #![deny(unused_must_use)]
+#![forbid(unsafe_code)]
 
 extern crate crypto;
 extern crate secp256k1;

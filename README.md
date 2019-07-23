@@ -1,3 +1,4 @@
+[![Safety Dance](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance/)
 # Bitcoin Wallet Library in Rust
 This is a library to build Bitcoin wallets with Rust. 
 It uses BIP32 key derivation, BIP39 mnemonics and BIP44 key 
