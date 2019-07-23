@@ -23,6 +23,7 @@
 extern crate crypto;
 extern crate secp256k1;
 extern crate bitcoin;
+extern crate bitcoin_hashes;
 extern crate rand;
 #[cfg(test)]
 extern crate hex;
@@ -36,3 +37,4 @@ pub mod error;
 pub mod context;
 pub mod masteraccount;
 pub mod account;
+pub mod wallet;
