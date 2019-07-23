@@ -18,11 +18,61 @@
 //!
 //!
 
-use bitcoin::BlockHeader;
+use bitcoin::{BitcoinHash, BlockHeader, Script};
 use bitcoin_hashes::{Hash, HashEngine, sha256d};
 use bitcoin::Transaction;
 use bitcoin::Block;
+use std::collections::HashSet;
 
+pub struct Wallet {
+    mempool: Vec<(u32, Transaction)>,
+    confirmed: Vec<(u32, ProvedTransaction)>,
+    headers: Vec<BlockHeader>,
+    scripts: HashSet<Script>
+}
+
+impl Wallet {
+    pub fn add_header(&mut self, header: BlockHeader) -> bool {
+        if self.headers.len() > 0 {
+            let tip = self.headers.last().unwrap().bitcoin_hash();
+            if tip == header.prev_blockhash {
+                self.headers.push(header);
+                return true;
+            }
+            return false;
+        }
+        else {
+            self.headers.push(header);
+        }
+        true
+    }
+
+    pub fn unwind_header(&mut self, header_id: &sha256d::Hash) -> bool {
+        if self.headers.len() > 0 {
+            let tip = self.headers.last().unwrap().bitcoin_hash();
+            if tip == *header_id {
+                let last = self.headers.len()-1;
+                self.headers.remove(last);
+                let mut m = self.confirmed.len();
+                for (i, (vout, c)) in self.confirmed.iter().enumerate().rev() {
+                    if c.block_height < last {
+                        break;
+                    }
+                    m = i;
+                }
+                for i in m..self.confirmed.len() {
+                    let c = self.confirmed[i].clone();
+                    self.mempool.push((c.0, c.1.transaction));
+                    self.confirmed.remove(i);
+                }
+                return true;
+            }
+        }
+        false
+    }
+}
+
+#[derive(Clone)]
 pub struct ProvedTransaction {
     transaction: Transaction,
     merkle_path: Vec<(bool, sha256d::Hash)>,
@@ -30,6 +80,13 @@ pub struct ProvedTransaction {
 }
 
 impl ProvedTransaction {
+    pub fn prove (&self, headers: &[BlockHeader]) -> bool {
+        if headers.len() <= self.block_height {
+            return false;
+        }
+        self.merkle_root() == headers[self.block_height].merkle_root
+    }
+
     pub fn merkle_root(&self) -> sha256d::Hash {
         self.merkle_path.iter()
             .fold(self.transaction.txid(), |a, (left, h)| {
