@@ -1,5 +1,5 @@
 //
-// Copyright 2018 Tamas Blummer
+// Copyright 2019 Tamas Blummer
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -72,6 +72,7 @@ impl Wallet {
     }
 }
 
+/// A conformed transaction with its SPV proof
 #[derive(Clone)]
 pub struct ProvedTransaction {
     transaction: Transaction,
@@ -80,6 +81,7 @@ pub struct ProvedTransaction {
 }
 
 impl ProvedTransaction {
+    /// Prove that the transaction is connected to a header with SPV proof
     pub fn prove (&self, headers: &[BlockHeader]) -> bool {
         if headers.len() <= self.block_height {
             return false;
@@ -87,6 +89,7 @@ impl ProvedTransaction {
         self.merkle_root() == headers[self.block_height].merkle_root
     }
 
+    /// compute the merkle root implied by the SPV proof
     pub fn merkle_root(&self) -> sha256d::Hash {
         self.merkle_path.iter()
             .fold(self.transaction.txid(), |a, (left, h)| {
@@ -103,8 +106,13 @@ impl ProvedTransaction {
         })
     }
 
+    /// compute a proof for a transaction in a block
+    /// panics if transaction is not in the block
     pub fn compute_proof(txid: &sha256d::Hash, block: &Block) -> Vec<(bool, sha256d::Hash)> {
 
+        /// one step of the reduction to merkle root
+        /// it returns the reduced vector and also the operation applied to the tracked id
+        /// the operation is (left, hash) left is true if hash should be hashed before the tracked id
         fn binhash(hashes: &[sha256d::Hash], track: usize) -> (Vec<sha256d::Hash>, Option<(usize, bool, sha256d::Hash)>) {
             let mut result = Vec::new();
             let mut op = None;
