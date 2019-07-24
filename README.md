@@ -6,7 +6,7 @@ hierarchy which makes it compatible to TREZOR, Ledger and many other
 wallets.
 
 ## Goal
-Offer a standalone wallet in conjunction with rust-bitcoin-spv.
+Offer a standalone wallet in conjunction with murmel.
 I plan to add TREZOR and Ledger support.
 
 ## Status
