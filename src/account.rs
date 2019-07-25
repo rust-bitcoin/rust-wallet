@@ -131,15 +131,14 @@ impl<'a> Iterator for AddressIterator<'a> {
     }
 }
 
-pub fn sign_pkh (transaction: &Transaction, ix: usize, script: &Script, hash_type: SigHashType, key: &PrivateKey, ctx: Arc<SecpContext>) -> Result<Vec<u8>, WalletError> {
+pub fn sign_legacy(transaction: &Transaction, ix: usize, script: &Script, hash_type: SigHashType, key: &PrivateKey, ctx: Arc<SecpContext>) -> Result<Vec<u8>, WalletError> {
     let sighash = transaction.signature_hash(ix, script, hash_type.as_u32());
     let mut signature = ctx.sign(&sighash[..], key)?.serialize_der();
     signature.push(hash_type.as_u32() as u8);
     Ok(signature)
 }
 
-
-pub fn sign_wpkh (transaction: &Transaction, ix: usize, script: &Script, value: u64, hash_type: SigHashType, key: &PrivateKey, ctx: Arc<SecpContext>) -> Result<Vec<u8>, WalletError> {
+pub fn sign_segwit(transaction: &Transaction, ix: usize, script: &Script, value: u64, hash_type: SigHashType, key: &PrivateKey, ctx: Arc<SecpContext>) -> Result<Vec<u8>, WalletError> {
     if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
         return Err(WalletError::Unsupported("can only sig all inputs for now"));
     }
@@ -149,12 +148,14 @@ pub fn sign_wpkh (transaction: &Transaction, ix: usize, script: &Script, value: 
     Ok(signature)
 }
 
+
 #[cfg(test)]
 mod test {
     use super::*;
     use bitcoin::blockdata::transaction::{TxOut, TxIn, OutPoint};
     use bitcoin::blockdata::script::Builder;
     use bitcoin::blockdata::opcodes::all;
+    use bitcoin::util::address::Payload;
     use bitcoin_hashes::{hash160,sha256d,Hash};
     use context::MasterKeyEntropy;
     use serde::Serialize;
@@ -215,7 +216,7 @@ mod test {
 
         let public = ctx.public_from_private(&pk);
 
-        let signature = sign_pkh(&spending_transaction, 0, &source.script_pubkey(), SigHashType::All, &pk, ctx.clone()).unwrap();
+        let signature = sign_legacy(&spending_transaction, 0, &source.script_pubkey(), SigHashType::All, &pk, ctx.clone()).unwrap();
 
         spending_transaction.input[0].script_sig = Builder::new()
             .push_slice(signature.as_slice())
@@ -276,21 +277,96 @@ mod test {
         spent.insert(txid, input_transaction.clone());
 
         let public = ctx.public_from_private(&pk);
-        let mut hash_engine = hash160::Hash::engine();
-        public.write_into(&mut hash_engine);
-
 
         let script_code = Builder::new()
             .push_opcode(all::OP_DUP)
             .push_opcode(all::OP_HASH160)
-            .push_slice(&hash160::Hash::from_engine(hash_engine)[..])
+            .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
             .push_opcode(all::OP_EQUALVERIFY)
             .push_opcode(all::OP_CHECKSIG)
             .into_script();
 
-        let signature = sign_wpkh(&spending_transaction, 0, &script_code,
-                                  input_transaction.output[0].value,
-                                  SigHashType::All, &pk, ctx.clone()).unwrap();
+        let signature = sign_segwit(&spending_transaction, 0, &script_code,
+                                    input_transaction.output[0].value,
+                                    SigHashType::All, &pk, ctx.clone()).unwrap();
+
+
+        spending_transaction.input[0].witness.push(signature);
+        spending_transaction.input[0].witness.push(public.to_bytes());
+        spending_transaction.verify(&spent).unwrap();
+    }
+
+    #[test]
+    fn test_shwpkh () {
+
+        let ctx = Arc::new(SecpContext::new());
+        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
+        let account = Account::new(ctx.clone(), master, AccountAddressType::P2SHWPKH, None, Network::Bitcoin).unwrap();
+        let pk = account.receive.get_key(0).unwrap();
+        let source = account.receive.get_address(0).unwrap();
+        let target = account.receive.get_address(1).unwrap();
+
+        let input_transaction = Transaction {
+            input: vec![
+                TxIn{
+                    previous_output: OutPoint{txid: sha256d::Hash::default(), vout: 0},
+                    sequence: 0,
+                    witness: Vec::new(),
+                    script_sig: Script::new()
+                }
+            ],
+            output: vec![
+                TxOut{
+                    script_pubkey: source.script_pubkey(),
+                    value: 5000000000
+                }
+            ],
+            lock_time: 0x11000000,
+            version: 1
+        };
+        let txid = input_transaction.txid();
+
+
+        let public = ctx.public_from_private(&pk);
+
+        let script_code = Builder::new()
+            .push_opcode(all::OP_DUP)
+            .push_opcode(all::OP_HASH160)
+            .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
+            .push_opcode(all::OP_EQUALVERIFY)
+            .push_opcode(all::OP_CHECKSIG)
+            .into_script();
+
+        let script_sig = Builder::new()
+            .push_int(0)
+            .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
+            .into_script();
+
+        let mut spending_transaction = Transaction {
+            input: vec![
+                TxIn{
+                    previous_output: OutPoint{txid, vout:0},
+                    sequence: 0,
+                    witness: Vec::new(),
+                    script_sig: Builder::new().push_slice(script_sig.to_bytes().as_slice()).into_script()
+                }
+            ],
+            output: vec![
+                TxOut{
+                    script_pubkey: target.script_pubkey(),
+                    value: 5000000000
+                }
+            ],
+            lock_time: 0x11000000,
+            version: 1
+        };
+
+        let mut spent = HashMap::new();
+        spent.insert(txid, input_transaction.clone());
+
+        let signature = sign_segwit(&spending_transaction, 0, &script_code,
+                                    input_transaction.output[0].value,
+                                    SigHashType::All, &pk, ctx.clone()).unwrap();
 
 
         spending_transaction.input[0].witness.push(signature);
