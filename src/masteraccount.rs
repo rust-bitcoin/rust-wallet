@@ -26,7 +26,6 @@ use error::WalletError;
 use mnemonic::Mnemonic;
 use account::{Account,AccountAddressType};
 use std::sync::Arc;
-use std::time::SystemTime;
 use std::collections::HashMap;
 
 // a factory for TREZOR (BIP44) compatible accounts
@@ -55,7 +54,7 @@ impl MasterAccount {
         for (a, births) in births.iter() {
             for (i, b) in births.iter().enumerate() {
                 accounts.entry(*a).or_insert(Vec::new()).push(
-                Self::new_account(context.clone(), &master_key, i as u32, *a, *b)?);
+                Self::new_account(context.clone(), &master_key, i as u32, *a, Some(*b))?);
             }
         }
         Ok(MasterAccount { context, master_key, encrypted: encrypted.to_vec(), network, accounts})
@@ -75,8 +74,7 @@ impl MasterAccount {
 
     pub fn add_account(&mut self, address_type: AccountAddressType) -> Result<usize, WalletError> {
         let accounts = self.accounts.entry(address_type).or_insert(Vec::new());
-        let account = Self::new_account(self.context.clone(), &self.master_key, accounts.len() as u32, address_type,
-                                        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs())?;
+        let account = Self::new_account(self.context.clone(), &self.master_key, accounts.len() as u32, address_type, None)?;
         accounts.push(account);
         Ok(accounts.len())
     }
@@ -109,7 +107,7 @@ impl MasterAccount {
     }
 
     /// create an account
-    fn new_account (context: Arc<SecpContext>, master_key: &ExtendedPrivKey, account_number: u32, address_type: AccountAddressType, birth: u64) -> Result<Account, WalletError> {
+    fn new_account (context: Arc<SecpContext>, master_key: &ExtendedPrivKey, account_number: u32, address_type: AccountAddressType, birth: Option<u64>) -> Result<Account, WalletError> {
         let mut key = match address_type {
             AccountAddressType::P2PKH => context.private_child(&master_key, ChildNumber::Hardened { index: 44 })?,
             AccountAddressType::P2SHWPKH => context.private_child(&master_key, ChildNumber::Hardened { index: 49 })?,

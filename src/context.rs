@@ -23,7 +23,7 @@ use bitcoin::{
     network::constants::Network
 };
 use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
-use secp256k1::{All,Secp256k1};
+use secp256k1::{All,Secp256k1, Message, Signature};
 use error::WalletError;
 use crypto::pbkdf2::pbkdf2;
 use crypto::hmac::Hmac;
@@ -73,6 +73,10 @@ impl SecpContext {
 
     pub fn public_from_private(&self, private: &PrivateKey) -> PublicKey {
         PublicKey::from_private_key(&self.secp, private)
+    }
+
+    pub fn sign(&self, digest: &[u8], key: &PrivateKey) -> Result<Signature, WalletError>{
+        Ok(self.secp.sign(&Message::from_slice(digest)?, &key.key))
     }
 }
 

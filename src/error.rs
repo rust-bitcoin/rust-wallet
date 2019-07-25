@@ -36,6 +36,8 @@ pub enum WalletError {
     IO(io::Error),
     /// key derivation error
     KeyDerivation(bip32::Error),
+    /// sekp256k1 error
+    SecpError(secp256k1::Error),
     /// cipher error
     SymmetricCipherError(symmetriccipher::SymmetricCipherError)
 }
@@ -46,6 +48,7 @@ impl Error for WalletError {
             WalletError::Mnemonic(ref s) => s,
             WalletError::IO(ref err) => err.description(),
             WalletError::KeyDerivation(ref err) => err.description(),
+            WalletError::SecpError(ref err) => err.description(),
             WalletError::SymmetricCipherError(ref err) => match err {
                 &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
                 &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding"
@@ -58,6 +61,7 @@ impl Error for WalletError {
             WalletError::Mnemonic(_) => None,
             WalletError::IO(ref err) => Some(err),
             WalletError::KeyDerivation(ref err) => Some(err),
+            WalletError::SecpError(ref err) => Some(err),
             WalletError::SymmetricCipherError(_) => None
         }
     }
@@ -71,6 +75,7 @@ impl fmt::Display for WalletError {
             WalletError::Mnemonic(ref s) => write!(f, "Mnemonic: {}", s),
             WalletError::IO(ref err) => write!(f, "IO error: {}", err),
             WalletError::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err),
+            WalletError::SecpError(ref err) => write!(f, "Secp256k1 error: {}", err),
             WalletError::SymmetricCipherError(ref err) => write!(f, "Cipher error: {}", match err {
                 &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
                 &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding"
@@ -109,5 +114,12 @@ impl convert::From<bip32::Error> for WalletError {
 impl convert::From<symmetriccipher::SymmetricCipherError> for WalletError {
     fn from(err: symmetriccipher::SymmetricCipherError) -> WalletError {
         WalletError::SymmetricCipherError(err)
+    }
+}
+
+
+impl convert::From<secp256k1::Error> for WalletError {
+    fn from(err: secp256k1::Error) -> WalletError {
+        WalletError::SecpError(err)
     }
 }
