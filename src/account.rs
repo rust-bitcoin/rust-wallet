@@ -96,17 +96,21 @@ impl<'a> AddressIterator<'a> {
 }
 
 impl<'a> Iterator for AddressIterator<'a> {
-    type Item = Address;
+    type Item = Result<Address, WalletError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let ep = self.account.context.private_child(
-            &self.account.key, ChildNumber::Normal {index: self.from}).expect("BIP32 derivation failed");
-        let address = match self.account.address_type {
-            AccountAddressType::P2PKH => Address::p2pkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
-            AccountAddressType::P2SHWPKH => Address::p2shwpkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
-            AccountAddressType::P2WPKH => Address::p2wpkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
-        };
-        self.from += 1;
-        Some(address)
+        match self.account.context.private_child(
+            &self.account.key, ChildNumber::Normal {index: self.from}) {
+            Ok(ep) => {
+                let address = match self.account.address_type {
+                    AccountAddressType::P2PKH => Address::p2pkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
+                    AccountAddressType::P2SHWPKH => Address::p2shwpkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
+                    AccountAddressType::P2WPKH => Address::p2wpkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
+                };
+                self.from += 1;
+                Some(Ok(address))
+            },
+            Err(e) => Some(Err(e))
+        }
     }
 }
