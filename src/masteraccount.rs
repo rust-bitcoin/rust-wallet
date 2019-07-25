@@ -111,7 +111,8 @@ impl MasterAccount {
         let mut key = match address_type {
             AccountAddressType::P2PKH => context.private_child(&master_key, ChildNumber::Hardened { index: 44 })?,
             AccountAddressType::P2SHWPKH => context.private_child(&master_key, ChildNumber::Hardened { index: 49 })?,
-            AccountAddressType::P2WPKH => context.private_child(&master_key, ChildNumber::Hardened { index: 84 })?
+            AccountAddressType::P2WPKH => context.private_child(&master_key, ChildNumber::Hardened { index: 84 })?,
+            AccountAddressType::P2WSH(index) => context.private_child(&master_key, ChildNumber::Hardened { index })?
         };
         key = match key.network {
             Network::Bitcoin => context.private_child(&key, ChildNumber::Hardened { index: 0 })?,

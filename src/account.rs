@@ -44,6 +44,9 @@ pub enum AccountAddressType {
     P2SHWPKH,
     /// native segwit pay to public key hash in bech format
     P2WPKH,
+    /// native segwit pay to script
+    /// do not use 44, 49 or 84 for this parameter, to avoid confusion with above types
+    P2WSH(u32)
 }
 
 /// a TREZOR compatible account
@@ -112,7 +115,26 @@ impl SubAccount {
                 AccountAddressType::P2PKH => Address::p2pkh(&self.context.public_from_private(&pk), self.network),
                 AccountAddressType::P2SHWPKH => Address::p2shwpkh(&self.context.public_from_private(&pk), self.network),
                 AccountAddressType::P2WPKH => Address::p2wpkh(&self.context.public_from_private(&pk), self.network),
+                AccountAddressType::P2WSH(_) => return Err(WalletError::Unsupported("use new_key_script instead"))
                 };
+            self.instantiated.push((ix, pk, public, address));
+            Ok(pk)
+        }
+    }
+
+    pub fn new_key_script<S>(&mut self, ix: u32, scripter: S) -> Result<PrivateKey,WalletError>
+        where S: Fn(u32, &PublicKey) -> Script
+    {
+        if let Some((_, pk, public, _)) = self.instantiated.iter().find(|(i,_, _, _)| ix == *i) {
+            return Ok(pk.clone());
+        }
+        else {
+            let pk = self.context.private_child(&self.key, ChildNumber::Normal { index: ix })?.private_key;
+            let public = self.context.public_from_private(&pk);
+            let address = match self.address_type {
+                AccountAddressType::P2WSH(n) => Address::p2wsh(&scripter(n, &public), self.network),
+                _ => return Err(WalletError::Unsupported("use new_key instead"))
+            };
             self.instantiated.push((ix, pk, public, address));
             Ok(pk)
         }
@@ -193,6 +215,40 @@ impl SubAccount {
                             input.witness.push(signature);
                             input.witness.push(public.to_bytes());
                             signed += 1;
+                        }
+                        AccountAddressType::P2WSH(_) => {
+                            return Err(WalletError::Unsupported("use sign_script instead"))
+                        }
+                    }
+                }
+            }
+        }
+        Ok(signed)
+    }
+
+    pub fn sign_script<R, W, S> (&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R, scripter: S, witness: W) -> Result<usize, WalletError>
+        where R: Fn(&OutPoint) -> Option<TxOut>, S: Fn(u32, &PublicKey) -> Script, W: Fn(Vec<u8>, &PublicKey) -> Vec<Vec<u8>> {
+        let mut signed = 0;
+        let txclone = transaction.clone();
+        for (ix, input) in transaction.input.iter_mut().enumerate() {
+            if let Some(spend) = resolver (&input.previous_output) {
+                if let Some((_,pk,public,a)) = self.instantiated.iter().find(|(_,_,_,a)| a.script_pubkey() == spend.script_pubkey) {
+                    match self.address_type {
+                        AccountAddressType::P2WSH(n) => {
+                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
+                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
+                            }
+                            input.script_sig = Script::new();
+                            let script_code = scripter(n, public);
+                            let sighash = bip143::SighashComponents::new(&txclone).sighash_all(&txclone.input[ix], &script_code, spend.value);
+                            let mut signature = self.context.sign(&sighash[..], pk)?.serialize_der();
+                            signature.push(hash_type.as_u32() as u8);
+                            input.witness = witness(signature, public);
+                            input.witness.push(script_code.to_bytes());
+                            signed += 1;
+                        },
+                        _ => {
+                            return Err(WalletError::Unsupported("use sign instead"))
                         }
                     }
                 }
@@ -385,4 +441,75 @@ mod test {
 
         spending_transaction.verify(&spent).unwrap();
     }
+
+    #[test]
+    fn test_wsh () {
+
+        let ctx = Arc::new(SecpContext::new());
+        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
+        let mut account = Account::new(ctx.clone(), master, AccountAddressType::P2WSH(4711), None, Network::Bitcoin).unwrap();
+
+        let scripter = |n: u32, public: &PublicKey| {
+            Builder::new()
+                .push_opcode(all::OP_DUP)
+                .push_opcode(all::OP_HASH160)
+                .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
+                .push_opcode(all::OP_EQUALVERIFY)
+                .push_opcode(all::OP_CHECKSIG)
+                .into_script()
+        };
+
+        let pk = account.receive.new_key_script(0, scripter).unwrap();
+        let source = account.receive.get_address(0).unwrap();
+        let target = account.receive.get_address(0).unwrap();
+        let input_transaction = Transaction {
+            input: vec![
+                TxIn{
+                    previous_output: OutPoint{txid: sha256d::Hash::default(), vout: 0},
+                    sequence: 0,
+                    witness: Vec::new(),
+                    script_sig: Script::new()
+                }
+            ],
+            output: vec![
+                TxOut{
+                    script_pubkey: source.script_pubkey(),
+                    value: 5000000000
+                }
+            ],
+            lock_time: 0xffffffff,
+            version: 1
+        };
+        let txid = input_transaction.txid();
+
+        let mut spending_transaction = Transaction {
+            input: vec![
+                TxIn{
+                    previous_output: OutPoint{txid, vout:0},
+                    sequence: 0,
+                    witness: Vec::new(),
+                    script_sig: Script::new()
+                }
+            ],
+            output: vec![
+                TxOut{
+                    script_pubkey: target.script_pubkey(),
+                    value: 5000000000
+                }
+            ],
+            lock_time: 0xffffffff,
+            version: 1
+        };
+
+        let mut spent = HashMap::new();
+        spent.insert(input_transaction.txid(), input_transaction.clone());
+
+        assert_eq!(account.receive.sign_script(
+            &mut spending_transaction, SigHashType::All,
+            |_| Some(input_transaction.output[0].clone()), scripter,
+            |sig, public| {vec!(sig, public.to_bytes())}).unwrap(), 1);
+
+        spending_transaction.verify(&spent).unwrap();
+    }
+
 }
