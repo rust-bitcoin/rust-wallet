@@ -1,5 +1,5 @@
 [package]
-name = "wallet"
+name = "bitcoin-wallet"
 version = "0.2.0"
 authors = ["Tamas Blummer <tamas.blummer@gmail.com>"]
 license = "Apache-2.0"
