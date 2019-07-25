@@ -230,7 +230,7 @@ impl SubAccount {
 
     /// sign a transaction with keys in this account works for P2WSH only
     pub fn sign_script<R, W, S> (&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R, scripter: S, witness: W) -> Result<usize, WalletError>
-        where R: Fn(&OutPoint) -> Option<TxOut>, S: Fn(u32, &PublicKey) -> Script, W: Fn(Vec<u8>, &PublicKey) -> Vec<Vec<u8>> {
+        where R: Fn(&OutPoint) -> Option<TxOut>, S: Fn(u32, &PublicKey) -> Script, W: Fn(u32, &Script, Vec<u8>, &PublicKey) -> Vec<Vec<u8>> {
         let mut signed = 0;
         let txclone = transaction.clone();
         for (ix, input) in transaction.input.iter_mut().enumerate() {
@@ -246,7 +246,7 @@ impl SubAccount {
                             let sighash = bip143::SighashComponents::new(&txclone).sighash_all(&txclone.input[ix], &script_code, spend.value);
                             let mut signature = self.context.sign(&sighash[..], pk)?.serialize_der();
                             signature.push(hash_type.as_u32() as u8);
-                            input.witness = witness(signature, public);
+                            input.witness = witness(n, &script_code, signature, public);
                             input.witness.push(script_code.to_bytes());
                             signed += 1;
                         },
@@ -508,7 +508,7 @@ mod test {
         assert_eq!(account.receive.sign_script(
             &mut spending_transaction, SigHashType::All,
             |_| Some(input_transaction.output[0].clone()), scripter,
-            |sig, public| {vec!(sig, public.to_bytes())}).unwrap(), 1);
+            |_, _, sig, public| {vec!(sig, public.to_bytes())}).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
