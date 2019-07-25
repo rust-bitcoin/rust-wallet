@@ -16,7 +16,7 @@
 //!
 //! # Accounts
 //!
-//! TREZOR compatible accounts (BIP44)
+//! TREZOR compatible accounts (BIP44, BIP49, BIP84)
 //!
 use bitcoin::{
     Address,
@@ -30,10 +30,12 @@ use error::WalletError;
 /// Address type an account is using
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AccountAddressType {
-    /// pay to public key hash (aka. legacy)
+    /// legacy pay to public key hash
     P2PKH,
-    /// pay to script hash of a witness script (aka. segwit in legacy address format)
-    P2SHWH
+    /// transitional segwit pay to public key hash in legacy format
+    P2SHWPKH,
+    /// native segwit pay to public key hash in bech format
+    P2WPKH,
 }
 
 /// a TREZOR compatible account
@@ -101,7 +103,8 @@ impl<'a> Iterator for AddressIterator<'a> {
             &self.account.key, ChildNumber::Normal {index: self.from}).expect("BIP32 derivation failed");
         let address = match self.account.address_type {
             AccountAddressType::P2PKH => Address::p2pkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
-            AccountAddressType::P2SHWH => Address::p2shwpkh(&self.account.context.public_from_private(&ep.private_key), self.account.network)
+            AccountAddressType::P2SHWPKH => Address::p2shwpkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
+            AccountAddressType::P2WPKH => Address::p2wpkh(&self.account.context.public_from_private(&ep.private_key), self.account.network),
         };
         self.from += 1;
         Some(address)

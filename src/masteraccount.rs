@@ -112,7 +112,8 @@ impl MasterAccount {
     fn new_account (context: Arc<SecpContext>, master_key: &ExtendedPrivKey, account_number: u32, address_type: AccountAddressType, birth: u64) -> Result<Account, WalletError> {
         let mut key = match address_type {
             AccountAddressType::P2PKH => context.private_child(&master_key, ChildNumber::Hardened { index: 44 })?,
-            AccountAddressType::P2SHWH => context.private_child(&master_key, ChildNumber::Hardened { index: 49 })?
+            AccountAddressType::P2SHWPKH => context.private_child(&master_key, ChildNumber::Hardened { index: 49 })?,
+            AccountAddressType::P2WPKH => context.private_child(&master_key, ChildNumber::Hardened { index: 84 })?
         };
         key = match key.network {
             Network::Bitcoin => context.private_child(&key, ChildNumber::Hardened { index: 0 })?,
