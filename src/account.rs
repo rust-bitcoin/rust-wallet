@@ -22,6 +22,7 @@ use bitcoin::{
     Address, Transaction, PrivateKey, Script,
     blockdata::transaction::SigHashType,
     util::bip32::{ExtendedPrivKey,ChildNumber},
+    util::bip143,
     network::constants::Network
 };
 use std::sync::Arc;
@@ -137,12 +138,24 @@ pub fn sign_pkh (transaction: &Transaction, ix: usize, script: &Script, hash_typ
     Ok(signature)
 }
 
+
+pub fn sign_wpkh (transaction: &Transaction, ix: usize, script: &Script, value: u64, hash_type: SigHashType, key: &PrivateKey, ctx: Arc<SecpContext>) -> Result<Vec<u8>, WalletError> {
+    if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
+        return Err(WalletError::Unsupported("can only sig all inputs for now"));
+    }
+    let sighash = bip143::SighashComponents::new(&transaction).sighash_all(&transaction.input[ix], script, value);
+    let mut signature = ctx.sign(&sighash[..], key)?.serialize_der();
+    signature.push(hash_type.as_u32() as u8);
+    Ok(signature)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use bitcoin::blockdata::transaction::{TxOut, TxIn, OutPoint};
     use bitcoin::blockdata::script::Builder;
-    use bitcoin_hashes::sha256d;
+    use bitcoin::blockdata::opcodes::all;
+    use bitcoin_hashes::{hash160,sha256d,Hash};
     use context::MasterKeyEntropy;
     use serde::Serialize;
     use std::collections::HashMap;
@@ -152,7 +165,7 @@ mod test {
     fn test_pkh () {
 
         let ctx = Arc::new(SecpContext::new());
-        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "").unwrap();
+        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
         let account = Account::new(ctx.clone(), master, AccountAddressType::P2PKH, None, Network::Bitcoin).unwrap();
         let pk = account.receive.get_key(0).unwrap();
         let source = account.receive.get_address(0).unwrap();
@@ -174,7 +187,7 @@ mod test {
                 }
             ],
             lock_time: 0xffffffff,
-            version: 2
+            version: 1
         };
         let txid = input_transaction.txid();
 
@@ -194,19 +207,94 @@ mod test {
                 }
             ],
             lock_time: 0xffffffff,
-            version: 2
+            version: 1
         };
 
         let mut spent = HashMap::new();
         spent.insert(input_transaction.txid(), input_transaction.clone());
 
-        let signature = sign_pkh(&spending_transaction, 0, &source.script_pubkey(), SigHashType::All, &pk, ctx.clone()).unwrap();
+        let public = ctx.public_from_private(&pk);
 
-       let public = ctx.public_from_private(&pk);
+        let signature = sign_pkh(&spending_transaction, 0, &source.script_pubkey(), SigHashType::All, &pk, ctx.clone()).unwrap();
 
         spending_transaction.input[0].script_sig = Builder::new()
             .push_slice(signature.as_slice())
             .push_slice(public.to_bytes().as_slice()).into_script();
+        spending_transaction.verify(&spent).unwrap();
+    }
+
+    #[test]
+    fn test_wpkh () {
+
+        let ctx = Arc::new(SecpContext::new());
+        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
+        let account = Account::new(ctx.clone(), master, AccountAddressType::P2WPKH, None, Network::Bitcoin).unwrap();
+        let pk = account.receive.get_key(0).unwrap();
+        let source = account.receive.get_address(0).unwrap();
+        let target = account.receive.get_address(1).unwrap();
+
+        let input_transaction = Transaction {
+            input: vec![
+                TxIn{
+                    previous_output: OutPoint{txid: sha256d::Hash::default(), vout: 0},
+                    sequence: 0,
+                    witness: Vec::new(),
+                    script_sig: Script::new()
+                }
+            ],
+            output: vec![
+                TxOut{
+                    script_pubkey: source.script_pubkey(),
+                    value: 5000000000
+                }
+            ],
+            lock_time: 0x11000000,
+            version: 1
+        };
+        let txid = input_transaction.txid();
+
+        let mut spending_transaction = Transaction {
+            input: vec![
+                TxIn{
+                    previous_output: OutPoint{txid, vout:0},
+                    sequence: 0,
+                    witness: Vec::new(),
+                    script_sig: Script::new()
+                }
+            ],
+            output: vec![
+                TxOut{
+                    script_pubkey: target.script_pubkey(),
+                    value: 5000000000
+                }
+            ],
+            lock_time: 0x11000000,
+            version: 1
+        };
+
+        let mut spent = HashMap::new();
+        spent.insert(txid, input_transaction.clone());
+
+        let public = ctx.public_from_private(&pk);
+        let mut hash_engine = hash160::Hash::engine();
+        public.write_into(&mut hash_engine);
+
+
+        let script_code = Builder::new()
+            .push_opcode(all::OP_DUP)
+            .push_opcode(all::OP_HASH160)
+            .push_slice(&hash160::Hash::from_engine(hash_engine)[..])
+            .push_opcode(all::OP_EQUALVERIFY)
+            .push_opcode(all::OP_CHECKSIG)
+            .into_script();
+
+        let signature = sign_wpkh(&spending_transaction, 0, &script_code,
+                                  input_transaction.output[0].value,
+                                  SigHashType::All, &pk, ctx.clone()).unwrap();
+
+
+        spending_transaction.input[0].witness.push(signature);
+        spending_transaction.input[0].witness.push(public.to_bytes());
         spending_transaction.verify(&spent).unwrap();
     }
 }

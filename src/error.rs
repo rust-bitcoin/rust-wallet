@@ -30,6 +30,8 @@ use crypto::symmetriccipher;
 
 /// An error class to offer a unified error interface upstream
 pub enum WalletError {
+    /// Unsupported
+    Unsupported(&'static str),
     /// mnemonic related error
     Mnemonic(&'static str),
     /// Network IO error
@@ -45,6 +47,7 @@ pub enum WalletError {
 impl Error for WalletError {
     fn description(&self) -> &str {
         match *self {
+            WalletError::Unsupported(ref s) => s,
             WalletError::Mnemonic(ref s) => s,
             WalletError::IO(ref err) => err.description(),
             WalletError::KeyDerivation(ref err) => err.description(),
@@ -58,6 +61,7 @@ impl Error for WalletError {
 
     fn cause(&self) -> Option<&dyn Error> {
         match *self {
+            WalletError::Unsupported(_) => None,
             WalletError::Mnemonic(_) => None,
             WalletError::IO(ref err) => Some(err),
             WalletError::KeyDerivation(ref err) => Some(err),
@@ -72,6 +76,7 @@ impl fmt::Display for WalletError {
         match *self {
             // Both underlying errors already impl `Display`, so we defer to
             // their implementations.
+            WalletError::Unsupported(ref s) => write!(f, "Unsupported: {}", s),
             WalletError::Mnemonic(ref s) => write!(f, "Mnemonic: {}", s),
             WalletError::IO(ref err) => write!(f, "IO error: {}", err),
             WalletError::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err),
