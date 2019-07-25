@@ -61,6 +61,7 @@ pub struct Account {
 }
 
 impl Account {
+    /// create a new account
     pub fn new (context: Arc<SecpContext>, key: ExtendedPrivKey, address_type: AccountAddressType, birth: Option<u64>, network: Network) -> Result<Account, WalletError> {
         let birth = birth.unwrap_or(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs());
 
@@ -80,6 +81,7 @@ impl Account {
         Ok(Account { context, key: key, address_type, birth, receive, change, network })
     }
 
+    /// sign a transaction with keys in this account
     pub fn sign<R> (&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R) -> Result<usize, WalletError>
         where R: Fn(&OutPoint) -> Option<TxOut> + Copy {
         let a = self.receive.sign(transaction, hash_type, resolver).unwrap();
@@ -103,7 +105,7 @@ pub struct SubAccount {
 }
 
 impl SubAccount {
-    // create a new key
+    /// create a new key
     pub fn new_key(&mut self, ix: u32) -> Result<PrivateKey,WalletError> {
         if let Some((_, pk, public, _)) = self.instantiated.iter().find(|(i,_, _, _)| ix == *i) {
             return Ok(pk.clone());
@@ -122,6 +124,7 @@ impl SubAccount {
         }
     }
 
+    /// create a new key for a P2WSH account
     pub fn new_key_script<S>(&mut self, ix: u32, scripter: S) -> Result<PrivateKey,WalletError>
         where S: Fn(u32, &PublicKey) -> Script
     {
@@ -140,7 +143,7 @@ impl SubAccount {
         }
     }
 
-    // get a previously created private key for an index
+    /// get a previously created private key for an index
     pub fn get_key(&self, ix: u32) -> Option<PrivateKey> {
         if let Some((_, pk, _, _)) = self.instantiated.iter().find(|(i,_, _, _)| ix == *i) {
             return Some(pk.clone());
@@ -148,7 +151,7 @@ impl SubAccount {
         None
     }
 
-    // get the address for an index, key for this index must have been created earlier
+    /// get the address for an index, key for this index must have been created earlier
     pub fn get_address (&self, ix: u32) -> Option<Address> {
         if let Some((_, _, _, address)) = self.instantiated.iter().find(|(i,_, _, _)| ix == *i) {
             return Some(address.clone());
@@ -156,6 +159,7 @@ impl SubAccount {
         None
     }
 
+    /// sign a transaction with keys in this account works for types except P2WSH
     pub fn sign<R> (&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R) -> Result<usize, WalletError>
         where R: Fn(&OutPoint) -> Option<TxOut> {
         let mut signed = 0;
@@ -216,9 +220,7 @@ impl SubAccount {
                             input.witness.push(public.to_bytes());
                             signed += 1;
                         }
-                        AccountAddressType::P2WSH(_) => {
-                            return Err(WalletError::Unsupported("use sign_script instead"))
-                        }
+                        AccountAddressType::P2WSH(_) => {}
                     }
                 }
             }
@@ -226,6 +228,7 @@ impl SubAccount {
         Ok(signed)
     }
 
+    /// sign a transaction with keys in this account works for P2WSH only
     pub fn sign_script<R, W, S> (&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R, scripter: S, witness: W) -> Result<usize, WalletError>
         where R: Fn(&OutPoint) -> Option<TxOut>, S: Fn(u32, &PublicKey) -> Script, W: Fn(Vec<u8>, &PublicKey) -> Vec<Vec<u8>> {
         let mut signed = 0;
@@ -247,9 +250,7 @@ impl SubAccount {
                             input.witness.push(script_code.to_bytes());
                             signed += 1;
                         },
-                        _ => {
-                            return Err(WalletError::Unsupported("use sign instead"))
-                        }
+                        _ => {}
                     }
                 }
             }
