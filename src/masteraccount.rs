@@ -60,11 +60,11 @@ impl MasterAccount {
         Ok(MasterAccount { context, master_key, encrypted: encrypted.to_vec(), network, accounts})
     }
 
-    /// only this should be stored (encrypted, account [(birth, tweak)], network)
-    pub fn configuration (&self) -> (Vec<u8>, HashMap<AccountAddressType, Vec<(u64, Option<Vec<u8>>)>>, Network) {
+    /// only this should be stored (encrypted, account [(birth, tweak, len)], network)
+    pub fn configuration (&self) -> (Vec<u8>, HashMap<AccountAddressType, Vec<(u64, Option<Vec<u8>>, usize, usize)>>, Network) {
         (self.encrypted.clone(),
             self.accounts.iter().map(|(a, v)|
-            (*a, v.iter().map(|c| (c.birth(), c.tweak())).collect::<Vec<_>>())).collect::<HashMap<_,_>>(), self.network)
+            (*a, v.iter().map(|c| (c.birth(), c.tweak(), c.receive.len(), c.change.len())).collect::<Vec<_>>())).collect::<HashMap<_,_>>(), self.network)
     }
 
     /// get a copy of the master public key

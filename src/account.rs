@@ -67,13 +67,13 @@ impl Account {
         let birth = birth.unwrap_or(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs());
 
         let receive = SubAccount{
-            context: context.clone(), address_type, birth, next:0,
+            context: context.clone(), address_type, birth,
             key: context.private_child(&key, ChildNumber::Normal{index:0})?,
             instantiated: Vec::new(), tweak: tweak.clone(),
             network
         };
         let change = SubAccount{
-            context: context.clone(), address_type, birth, next:0,
+            context: context.clone(), address_type, birth,
             key: context.private_child(&key, ChildNumber::Normal{index:1})?,
             instantiated: Vec::new(), tweak: tweak.clone(),
             network
@@ -106,26 +106,25 @@ pub struct SubAccount {
     instantiated: Vec<(u32, PrivateKey, PublicKey, Address)>,
     birth: u64,
     tweak: Option<Vec<u8>>,
-    network: Network,
-    next: u32
+    network: Network
 }
 
 impl SubAccount {
     /// create a new key
-    pub fn new_key(&mut self, ix: u32) -> Result<PrivateKey,WalletError> {
-        if let Some((_, pk, public, _)) = self.instantiated.iter().find(|(i,_, _, _)| ix == *i) {
-            return Ok(pk.clone());
+    pub fn next_key(&mut self) -> Result<(u32, PrivateKey),WalletError> {
+        let ix = self.instantiated.len() as u32;
+        let mut pk = self.context.private_child(&self.key, ChildNumber::Normal { index: ix })?.private_key;
+        if let Some(ref tweak) = self.tweak {
+            pk.key.add_assign(tweak.as_slice())?;
         }
-        else {
-            let mut pk = self.context.private_child(&self.key, ChildNumber::Normal { index: ix })?.private_key;
-            if let Some(ref tweak) = self.tweak {
-                pk.key.add_assign(tweak.as_slice())?;
-            }
-            let public = self.context.public_from_private(&pk);
-            let address = self.address_for_key(&public)?;
-            self.instantiated.push((ix, pk, public, address));
-            Ok(pk)
-        }
+        let public = self.context.public_from_private(&pk);
+        let address = self.address_for_key(&public)?;
+        self.instantiated.push((ix, pk, public, address));
+        Ok((ix, pk))
+    }
+
+    pub fn len (&self) -> usize {
+        self.instantiated.len()
     }
 
     fn address_for_key (&self, public: &PublicKey) -> Result<Address, WalletError> {
@@ -139,25 +138,21 @@ impl SubAccount {
     }
 
     /// create a new key for a P2WSH account
-    pub fn new_key_script<S>(&mut self, ix: u32, scripter: S) -> Result<PrivateKey,WalletError>
+    pub fn next_key_script<S>(&mut self, scripter: S) -> Result<(u32, PrivateKey),WalletError>
         where S: Fn(u32, &PublicKey) -> Script
     {
-        if let Some((_, pk, public, _)) = self.instantiated.iter().find(|(i,_, _, _)| ix == *i) {
-            return Ok(pk.clone());
+        let ix = self.instantiated.len() as u32;
+        let mut pk = self.context.private_child(&self.key, ChildNumber::Normal { index: ix })?.private_key;
+        if let Some(ref tweak) = self.tweak {
+            pk.key.add_assign(tweak.as_slice())?;
         }
-        else {
-            let mut pk = self.context.private_child(&self.key, ChildNumber::Normal { index: ix })?.private_key;
-            if let Some(ref tweak) = self.tweak {
-                pk.key.add_assign(tweak.as_slice())?;
-            }
-            let public = self.context.public_from_private(&pk);
-            let address = match self.address_type {
-                AccountAddressType::P2WSH(n) => Address::p2wsh(&scripter(n, &public), self.network),
-                _ => return Err(WalletError::Unsupported("use new_key instead"))
-            };
-            self.instantiated.push((ix, pk, public, address));
-            Ok(pk)
-        }
+        let public = self.context.public_from_private(&pk);
+        let address = match self.address_type {
+            AccountAddressType::P2WSH(n) => Address::p2wsh(&scripter(n, &public), self.network),
+            _ => return Err(WalletError::Unsupported("use new_key instead"))
+        };
+        self.instantiated.push((ix, pk, public, address));
+        Ok((ix, pk))
     }
 
     /// get a previously created private key for an index
@@ -303,9 +298,9 @@ mod test {
         let ctx = Arc::new(SecpContext::new());
         let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
         let mut account = Account::new(ctx.clone(), master, AccountAddressType::P2PKH, None, None, Network::Bitcoin).unwrap();
-        let pk = account.receive.new_key(0).unwrap();
-        let source = account.receive.get_address(0).unwrap();
-        let target = account.receive.get_address(0).unwrap();
+        let (ix, pk) = account.receive.next_key().unwrap();
+        let source = account.receive.get_address(ix).unwrap();
+        let target = account.receive.get_address(ix).unwrap();
         let input_transaction = Transaction {
             input: vec![
                 TxIn{
@@ -359,9 +354,9 @@ mod test {
         let ctx = Arc::new(SecpContext::new());
         let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
         let mut account = Account::new(ctx.clone(), master, AccountAddressType::P2WPKH, None, None,Network::Bitcoin).unwrap();
-        let pk = account.receive.new_key(0).unwrap();
-        let source = account.receive.get_address(0).unwrap();
-        let target = account.receive.get_address(0).unwrap();
+        let (ix, pk) = account.receive.next_key().unwrap();
+        let source = account.receive.get_address(ix).unwrap();
+        let target = account.receive.get_address(ix).unwrap();
 
         let input_transaction = Transaction {
             input: vec![
@@ -416,9 +411,9 @@ mod test {
         let ctx = Arc::new(SecpContext::new());
         let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
         let mut account = Account::new(ctx.clone(), master, AccountAddressType::P2SHWPKH, None, None, Network::Bitcoin).unwrap();
-        let pk = account.receive.new_key(0).unwrap();
-        let source = account.receive.get_address(0).unwrap();
-        let target = account.receive.get_address(0).unwrap();
+        let (ix, pk) = account.receive.next_key().unwrap();
+        let source = account.receive.get_address(ix).unwrap();
+        let target = account.receive.get_address(ix).unwrap();
 
         let input_transaction = Transaction {
             input: vec![
@@ -485,9 +480,9 @@ mod test {
                 .into_script()
         };
 
-        let pk = account.receive.new_key_script(0, scripter).unwrap();
-        let source = account.receive.get_address(0).unwrap();
-        let target = account.receive.get_address(0).unwrap();
+        let (ix, pk) = account.receive.next_key_script(scripter).unwrap();
+        let source = account.receive.get_address(ix).unwrap();
+        let target = account.receive.get_address(ix).unwrap();
         let input_transaction = Transaction {
             input: vec![
                 TxIn{
