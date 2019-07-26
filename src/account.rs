@@ -132,7 +132,7 @@ impl SubAccount {
             AccountAddressType::P2PKH => Address::p2pkh(&public, self.network),
             AccountAddressType::P2SHWPKH => Address::p2shwpkh(&public, self.network),
             AccountAddressType::P2WPKH => Address::p2wpkh(&public, self.network),
-            AccountAddressType::P2WSH(_) => return Err(WalletError::Unsupported("use new_key_script instead"))
+            AccountAddressType::P2WSH(_) => return Err(WalletError::Unsupported("use next_key_script instead"))
         };
         Ok(address)
     }
@@ -149,7 +149,7 @@ impl SubAccount {
         let public = self.context.public_from_private(&pk);
         let address = match self.address_type {
             AccountAddressType::P2WSH(n) => Address::p2wsh(&scripter(n, &public), self.network),
-            _ => return Err(WalletError::Unsupported("use new_key instead"))
+            _ => return Err(WalletError::Unsupported("use next_key instead"))
         };
         self.instantiated.push((ix, pk, public, address));
         Ok((ix, pk))
