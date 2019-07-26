@@ -21,6 +21,7 @@
 
 use bitcoin::network::constants::Network;
 use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
+use bitcoin::Script;
 use context::{SecpContext, MasterKeyEntropy, Seed};
 use error::WalletError;
 use mnemonic::Mnemonic;
@@ -104,6 +105,18 @@ impl MasterAccount {
         else {
             None
         }
+    }
+
+    pub fn get_scripts(&self) -> HashMap<(AccountAddressType, usize), (HashMap<Script, usize>, HashMap<Script, usize>)> {
+        self.accounts.iter().enumerate()
+            .flat_map(|(i, (t, a))|
+                a.iter()
+                    .map(move |a| ((*t, i), {
+                        let scripts = a.get_scripts();
+                        (scripts.0.enumerate().map(|(n, s)| (s, n)).collect(),
+                         scripts.1.enumerate().map(|(n, s)| (s, n)).collect())
+                    }
+                    ))).collect()
     }
 
     /// create an account

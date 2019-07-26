@@ -22,55 +22,89 @@ use bitcoin::{BitcoinHash, BlockHeader, Script};
 use bitcoin_hashes::{Hash, HashEngine, sha256d};
 use bitcoin::Transaction;
 use bitcoin::Block;
-use std::collections::HashSet;
-use serde::{Serialize, Deserialize};
+use std::collections::{HashMap, HashSet};
+use crate::masteraccount::MasterAccount;
+use crate::account::AccountAddressType;
+use crate::error::WalletError;
 
+/// A wallet
 pub struct Wallet {
-    mempool: Vec<(u32, Transaction)>,
-    confirmed: Vec<(u32, ProvedTransaction)>,
+    master: MasterAccount,
+    confirmed: HashMap<sha256d::Hash, ProvedTransaction>,
     headers: Vec<BlockHeader>,
-    scripts: HashSet<Script>
+    scripts: HashMap<AccountAddressType, HashSet<Script>>
 }
 
 impl Wallet {
-    pub fn add_header(&mut self, header: BlockHeader) -> bool {
+    /// get the tip hash of the header chain
+    pub fn get_tip (&self) -> Option<&BlockHeader> {
+        self.headers.last()
+    }
+
+    /// add a header to the tip of the chain
+    /// the caller should do SPV check and evtl. unwind
+    /// before adding this header after a reorg.
+    pub fn add_header(&mut self, header: BlockHeader) -> Result<(), WalletError> {
         if self.headers.len() > 0 {
-            let tip = self.headers.last().unwrap().bitcoin_hash();
-            if tip == header.prev_blockhash {
+            if self.get_tip().unwrap().bitcoin_hash() == header.prev_blockhash {
                 self.headers.push(header);
-                return true;
             }
-            return false;
+            else {
+                return Err(WalletError::Unsupported("only add header connected to tip"));
+            }
         }
         else {
             self.headers.push(header);
         }
-        true
+        Ok(())
     }
 
-    pub fn unwind_header(&mut self, header_id: &sha256d::Hash) -> bool {
-        if self.headers.len() > 0 {
-            let tip = self.headers.last().unwrap().bitcoin_hash();
-            if tip == *header_id {
-                let last = self.headers.len()-1;
-                self.headers.remove(last);
-                let mut m = self.confirmed.len();
-                for (i, (vout, c)) in self.confirmed.iter().enumerate().rev() {
-                    if (c.block_height as usize) < last {
-                        break;
+    /// unwind the tip
+    pub fn unwind_tip(&mut self) -> Result<(), WalletError> {
+        let len = self.headers.len();
+        if len > 0 {
+            self.headers.remove(len-1);
+            let to_remove = self.confirmed.iter().filter_map(|(id, t)| if t.block_height as usize == len-1 {Some(id.clone())}else{None}).collect::<Vec<sha256d::Hash>>();
+            for h in &to_remove {
+                self.confirmed.remove(h);
+            }
+            return Ok(())
+        }
+        Err(WalletError::Unsupported("unwind on empty chain"))
+    }
+
+    /// process a block
+    pub fn process(&mut self, block: &Block, look_ahead: usize) {
+        let  scripts = self.master.get_scripts();
+        for tx in &block.txdata {
+            for input in tx.input.iter().skip(1) {
+
+            }
+            for output in &tx.output {
+                if let Some((address_type, account, rc, kix)) = scripts.iter()
+                    .find_map(|((at, n), s)|
+                        { if let Some(kix) = s.0.get(&output.script_pubkey) {
+                            Some((*at, *n, 0, *kix))
+                        } else {
+                            if let Some(kix) = s.1.get(&output.script_pubkey) {
+                                Some((*at, *n, 1, *kix))
+                            }else {None} }}) {
+                    if let Some (account) = self.master.get_account_mut(address_type, account) {
+                        let sub_account = if rc == 0 {
+                            &mut account.receive
+                        } else {
+                            &mut account.change
+                        };
+                        let al = sub_account.len();
+                        if al - kix < look_ahead {
+                            // TODO
+                        }
                     }
-                    m = i;
                 }
-                for i in m..self.confirmed.len() {
-                    let c = self.confirmed[i].clone();
-                    self.mempool.push((c.0, c.1.transaction));
-                    self.confirmed.remove(i);
-                }
-                return true;
             }
         }
-        false
     }
+
 }
 
 /// A confirmed transaction with its SPV proof
