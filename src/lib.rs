@@ -29,9 +29,10 @@ extern crate rand;
 #[cfg(test)]
 extern crate hex;
 #[cfg(test)]
-extern crate serde;
-#[cfg(test)]
 extern crate serde_json;
+
+extern crate serde;
+#[macro_use] extern crate serde_derive;
 
 pub mod mnemonic;
 pub mod error;

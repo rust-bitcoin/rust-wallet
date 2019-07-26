@@ -23,6 +23,7 @@ use bitcoin_hashes::{Hash, HashEngine, sha256d};
 use bitcoin::Transaction;
 use bitcoin::Block;
 use std::collections::HashSet;
+use serde::{Serialize, Deserialize};
 
 pub struct Wallet {
     mempool: Vec<(u32, Transaction)>,
@@ -55,7 +56,7 @@ impl Wallet {
                 self.headers.remove(last);
                 let mut m = self.confirmed.len();
                 for (i, (vout, c)) in self.confirmed.iter().enumerate().rev() {
-                    if c.block_height < last {
+                    if (c.block_height as usize) < last {
                         break;
                     }
                     m = i;
@@ -72,21 +73,30 @@ impl Wallet {
     }
 }
 
-/// A conformed transaction with its SPV proof
-#[derive(Clone)]
+/// A confirmed transaction with its SPV proof
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProvedTransaction {
     transaction: Transaction,
     merkle_path: Vec<(bool, sha256d::Hash)>,
-    block_height: usize
+    block_height: u32
 }
 
 impl ProvedTransaction {
+    /// get a copy of the transaction
+    pub fn get_transaction (&self) -> Transaction {
+        self.transaction.clone()
+    }
+
+    pub fn get_block_height (&self) -> u32 {
+        self.block_height
+    }
+
     /// Prove that the transaction is connected to a header with SPV proof
     pub fn prove (&self, headers: &[BlockHeader]) -> bool {
-        if headers.len() <= self.block_height {
+        if headers.len() <= (self.block_height as usize) {
             return false;
         }
-        self.merkle_root() == headers[self.block_height].merkle_root
+        self.merkle_root() == headers[self.block_height as usize].merkle_root
     }
 
     /// compute the merkle root implied by the SPV proof

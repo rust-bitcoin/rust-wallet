@@ -78,6 +78,12 @@ impl SecpContext {
     pub fn sign(&self, digest: &[u8], key: &PrivateKey) -> Result<Signature, WalletError>{
         Ok(self.secp.sign(&Message::from_slice(digest)?, &key.key))
     }
+
+    pub fn tweak_add(&self, key: &PrivateKey, tweak: &[u8]) -> Result<PrivateKey, WalletError> {
+        let mut pk = key.clone();
+        pk.key.add_assign(tweak)?;
+        Ok(PrivateKey{key: pk.key, network: key.network, compressed: key.compressed})
+    }
 }
 
 #[derive(Copy, Clone)]

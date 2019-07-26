@@ -1,6 +1,6 @@
 [package]
 name = "bitcoin-wallet"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Tamas Blummer <tamas.blummer@gmail.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/rust-bitcoin/rust-wallet/"
@@ -16,8 +16,9 @@ bitcoin_hashes={version="0.3", features=["serde"]}
 secp256k1 = "0.12"
 rust-crypto = "0.2"
 rand = "0.7"
+serde = "1"
+serde_derive = "1"
 
 [dev-dependencies]
-serde = "1"
 serde_json="1"
 hex = "0.3"
