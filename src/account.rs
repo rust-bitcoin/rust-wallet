@@ -164,6 +164,7 @@ impl SubAccount {
         where R: Fn(&OutPoint) -> Option<TxOut> {
         let mut signed = 0;
         let txclone = transaction.clone();
+        let mut bip143hasher : Option<bip143::SighashComponents> = None;
         for (ix, input) in transaction.input.iter_mut().enumerate() {
             if let Some(spend) = resolver (&input.previous_output) {
                 if let Some((_,pk,public,a)) = self.instantiated.iter().find(|(_,_,_,a)| a.script_pubkey() == spend.script_pubkey) {
@@ -190,7 +191,9 @@ impl SubAccount {
                                 .push_opcode(all::OP_CHECKSIG)
                                 .into_script();
 
-                            let sighash = bip143::SighashComponents::new(&txclone).sighash_all(&txclone.input[ix], &script_code, spend.value);
+                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
+                            let sighash = hasher.sighash_all(&txclone.input[ix], &script_code, spend.value);
+                            bip143hasher = Some(hasher);
                             let mut signature = self.context.sign(&sighash[..], pk)?.serialize_der();
                             signature.push(hash_type.as_u32() as u8);
                             input.witness.push(signature);
@@ -213,7 +216,9 @@ impl SubAccount {
                                 .push_opcode(all::OP_CHECKSIG)
                                 .into_script();
 
-                            let sighash = bip143::SighashComponents::new(&txclone).sighash_all(&txclone.input[ix], &script_code, spend.value);
+                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
+                            let sighash = hasher.sighash_all(&txclone.input[ix], &script_code, spend.value);
+                            bip143hasher = Some(hasher);
                             let mut signature = self.context.sign(&sighash[..], pk)?.serialize_der();
                             signature.push(hash_type.as_u32() as u8);
                             input.witness.push(signature);
@@ -233,6 +238,7 @@ impl SubAccount {
         where R: Fn(&OutPoint) -> Option<TxOut>, S: Fn(u32, &PublicKey) -> Script, W: Fn(Vec<u8>, &PublicKey) -> Vec<Vec<u8>> {
         let mut signed = 0;
         let txclone = transaction.clone();
+        let mut bip143hasher : Option<bip143::SighashComponents> = None;
         for (ix, input) in transaction.input.iter_mut().enumerate() {
             if let Some(spend) = resolver (&input.previous_output) {
                 if let Some((_,pk,public,a)) = self.instantiated.iter().find(|(_,_,_,a)| a.script_pubkey() == spend.script_pubkey) {
@@ -243,7 +249,9 @@ impl SubAccount {
                             }
                             input.script_sig = Script::new();
                             let script_code = scripter(n, public);
-                            let sighash = bip143::SighashComponents::new(&txclone).sighash_all(&txclone.input[ix], &script_code, spend.value);
+                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
+                            let sighash = hasher.sighash_all(&txclone.input[ix], &script_code, spend.value);
+                            bip143hasher = Some(hasher);
                             let mut signature = self.context.sign(&sighash[..], pk)?.serialize_der();
                             signature.push(hash_type.as_u32() as u8);
                             input.witness = witness(signature, public);
