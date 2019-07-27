@@ -20,25 +20,33 @@
 
 use bitcoin::{BitcoinHash, BlockHeader, Script};
 use bitcoin_hashes::{Hash, HashEngine, sha256d};
-use bitcoin::Transaction;
+use bitcoin::{OutPoint, TxOut, Transaction};
 use bitcoin::Block;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use crate::masteraccount::MasterAccount;
 use crate::account::AccountAddressType;
 use crate::error::WalletError;
 
+
 /// A wallet
 pub struct Wallet {
     master: MasterAccount,
-    confirmed: HashMap<sha256d::Hash, ProvedTransaction>,
+    owned: HashMap<OutPoint, TxOut>,
+    proofs: HashMap<sha256d::Hash, ProvedTransaction>,
     headers: Vec<BlockHeader>,
-    scripts: HashMap<AccountAddressType, HashSet<Script>>
+    processed_height: u32
 }
 
 impl Wallet {
+
     /// get the tip hash of the header chain
     pub fn get_tip (&self) -> Option<&BlockHeader> {
         self.headers.last()
+    }
+
+    /// get the chain height
+    pub fn get_height(&self) -> u32 {
+        self.headers.len() as u32
     }
 
     /// add a header to the tip of the chain
@@ -54,6 +62,7 @@ impl Wallet {
             }
         }
         else {
+            // add genesis
             self.headers.push(header);
         }
         Ok(())
@@ -63,46 +72,60 @@ impl Wallet {
     pub fn unwind_tip(&mut self) -> Result<(), WalletError> {
         let len = self.headers.len();
         if len > 0 {
-            self.headers.remove(len-1);
-            let to_remove = self.confirmed.iter().filter_map(|(id, t)| if t.block_height as usize == len-1 {Some(id.clone())}else{None}).collect::<Vec<sha256d::Hash>>();
-            for h in &to_remove {
-                self.confirmed.remove(h);
+            let header = self.headers.remove(len-1);
+            if self.processed_height as usize == len-1 {
+                // this means we might have lost control of coins at least temporarily
+                let lost_coins = self.proofs.values()
+                    .filter_map(|t| if t.block_height as usize == len - 1 {
+                        Some(t.transaction.txid())
+                    } else { None })
+                    .flat_map(|txid| self.owned.keys().filter(move |point| point.txid == txid)).cloned().collect::<Vec<OutPoint>>();
+
+                for point in lost_coins {
+                    self.proofs.remove(&point.txid);
+                    self.owned.remove(&point);
+                }
+                self.processed_height -= 1;
             }
             return Ok(())
         }
         Err(WalletError::Unsupported("unwind on empty chain"))
     }
+    /// skip blocks before birth of our keys
+    pub fn skip_blocks (&mut self, birth: u64) {
+        if let Some(later) = self.headers.iter().position(|h| h.time as u64 > birth) {
+            self.processed_height = (later - 1) as u32;
+        }
+        else {
+            self.processed_height = (self.headers.len()-1) as u32;
+        }
+    }
 
     /// process a block
-    pub fn process(&mut self, block: &Block, look_ahead: usize) {
-        let  scripts = self.master.get_scripts();
+    /// have to process all blocks as we have no BIP158 filters yet
+    pub fn process(&mut self, height: u32, block: &Block, look_ahead: usize) -> Result<(), WalletError> {
+        if height < self.processed_height {
+            return Err(WalletError::Unsupported("can only process blocks in consecutive order"));
+        }
+        if block.header.bitcoin_hash() != self.headers[height as usize].bitcoin_hash() {
+            return Err(WalletError::Unsupported("not the block expected"));
+        }
+
+        let mut spends = Vec::new();
+
+        let  scripts :HashMap<(AccountAddressType, usize), (HashMap<Script, usize>, HashMap<Script, usize>)> = self.master.get_scripts();
         for tx in &block.txdata {
             for input in tx.input.iter().skip(1) {
-
-            }
-            for output in &tx.output {
-                if let Some((address_type, account, rc, kix)) = scripts.iter()
-                    .find_map(|((at, n), s)|
-                        { if let Some(kix) = s.0.get(&output.script_pubkey) {
-                            Some((*at, *n, 0, *kix))
-                        } else {
-                            if let Some(kix) = s.1.get(&output.script_pubkey) {
-                                Some((*at, *n, 1, *kix))
-                            }else {None} }}) {
-                    if let Some (account) = self.master.get_account_mut(address_type, account) {
-                        let sub_account = if rc == 0 {
-                            &mut account.receive
-                        } else {
-                            &mut account.change
-                        };
-                        let al = sub_account.len();
-                        if al - kix < look_ahead {
-                            // TODO
-                        }
-                    }
+                if let Some(spend) = self.owned.remove(&input.previous_output) {
+                    spends.push((input.previous_output.clone(), spend.clone()));
                 }
             }
+            for output in &tx.output {
+
+            }
         }
+        self.processed_height = height;
+        Ok(())
     }
 
 }
