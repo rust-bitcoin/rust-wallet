@@ -138,6 +138,16 @@ impl Wallet {
         self.processed_height = height;
         Ok(())
     }
+
+    pub fn get_coins<V> (&self,  minimum: u64, scripts: impl Iterator<Item=Script>, validator: V) -> Vec<(OutPoint, TxOut)>
+        where V: Fn(&TxOut) -> bool {
+        let mut sum = 0u64;
+        scripts.flat_map(|s| self.owned.iter()
+            .filter_map(|(p, o)| if o.script_pubkey == s && validator(o) {
+                Some((p.clone(), o.clone()))
+            }else{None}).collect::<Vec<(OutPoint, TxOut)>>())
+            .take_while(move |(p, o)| {sum += o.value; sum < minimum}).collect::<Vec<(OutPoint, TxOut)>>()
+    }
 }
 
 /// A confirmed transaction with its SPV proof
