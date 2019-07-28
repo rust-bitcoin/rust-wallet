@@ -50,7 +50,7 @@ pub enum AccountAddressType {
     /// native segwit pay to script
     /// do not use 44, 49 or 84 for this parameter, to avoid confusion with above types
     /// Only supports scripts that can be spent with following witness:
-    /// <signature> <pubkey> <scriptCode>
+    /// <signature> <scriptCode>
     P2WSH(u32),
 }
 
@@ -328,7 +328,6 @@ impl SubAccount {
                             let mut signature = self.context.sign(&sighash[..], &instantiated.pk)?.serialize_der();
                             signature.push(hash_type.as_u32() as u8);
                             input.witness.push(signature);
-                            input.witness.push(instantiated.public.to_bytes());
                             input.witness.push(instantiated.script_code.to_bytes());
                             signed += 1;
                         }
@@ -543,10 +542,7 @@ mod test {
         let pk = ctx.tweak_add(&pk, &[0x01; 32]).unwrap();
 
         let scrip_code = Builder::new()
-            .push_opcode(all::OP_DUP)
-            .push_opcode(all::OP_HASH160)
-            .push_slice(&hash160::Hash::hash(ctx.public_from_private(&pk).to_bytes().as_slice())[..])
-            .push_opcode(all::OP_EQUALVERIFY)
+            .push_slice(ctx.public_from_private(&pk).to_bytes().as_slice())
             .push_opcode(all::OP_CHECKSIG)
             .into_script();
 
