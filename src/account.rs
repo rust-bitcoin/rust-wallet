@@ -25,7 +25,7 @@ use std::time::SystemTime;
 use bitcoin::{
     Address, blockdata::{
         opcodes::all,
-        transaction::{SigHashType, TxIn, TxOut},
+        transaction::{SigHashType, TxOut},
     }, blockdata::script::Builder, network::constants::Network, OutPoint, PrivateKey,
     PublicKey,
     Script,
@@ -33,7 +33,7 @@ use bitcoin::{
     util::bip143,
     util::bip32::{ChildNumber, ExtendedPrivKey},
 };
-use bitcoin_hashes::{Hash, hash160, sha256d};
+use bitcoin_hashes::{Hash, hash160};
 
 use context::SecpContext;
 use error::WalletError;
@@ -58,49 +58,33 @@ pub enum AccountAddressType {
 pub struct Account {
     birth: u64,
     // seconds in unix epoch
-    pub receive: SubAccount,
-    pub change: SubAccount,
+    sub: Vec<SubAccount>
 }
 
 impl Account {
     /// create a new account
-    pub fn new(context: Arc<SecpContext>, key: ExtendedPrivKey, address_type: AccountAddressType, birth: Option<u64>, clen: u32, rlen: u32, look_ahead: u32, network: Network) -> Result<Account, WalletError> {
+    pub fn new(context: Arc<SecpContext>, key: ExtendedPrivKey, address_type: AccountAddressType, birth: Option<u64>, used: Vec<u32>, look_ahead: u32, network: Network) -> Result<Account, WalletError> {
         let birth = birth.unwrap_or(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs());
 
-        let mut receive = SubAccount {
-            context: context.clone(),
-            address_type,
-            key: context.private_child(&key, ChildNumber::Normal { index: 0 })?,
-            instantiated: Vec::new(),
-            next: 0,
-            network,
-        };
-        receive.look_ahead(0, look_ahead)?;
-        for _ in 0..rlen {
-            receive.next_key()?;
-        }
-        let mut change = SubAccount {
-            context: context.clone(),
-            address_type,
-            key: context.private_child(&key, ChildNumber::Normal { index: 1 })?,
-            instantiated: Vec::new(),
-            next: 0,
-            network,
-        };
-        change.look_ahead(0, look_ahead)?;
-        for _ in 0..clen {
-            change.next_key()?;
+        let mut sub = Vec::new();
+        for (i, u) in used.iter().enumerate() {
+            let mut s = SubAccount {
+                context: context.clone(),
+                address_type,
+                key: context.private_child(&key, ChildNumber::Normal { index: i as u32 })?,
+                instantiated: Vec::new(),
+                next: 0,
+                look_ahead,
+                network,
+            };
+            s.look_ahead(0)?;
+            for _ in 0..*u {
+                s.next_key()?;
+            }
+            sub.push(s);
         }
 
-        Ok(Account { birth, receive, change })
-    }
-
-    /// sign a transaction with keys in this account
-    pub fn sign<R>(&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R) -> Result<usize, WalletError>
-        where R: Fn(&OutPoint) -> Option<TxOut> + Copy {
-        let a = self.receive.sign(transaction, hash_type, resolver).unwrap();
-        let b = self.change.sign(transaction, hash_type, resolver).unwrap();
-        Ok(a + b)
+        Ok(Account { birth, sub })
     }
 
     pub fn birth(&self) -> u64 {
@@ -108,19 +92,35 @@ impl Account {
     }
 
     // get all pubkey scripts of this account
-    pub fn get_scripts<'a>(&'a self) -> (impl Iterator<Item=Script> + 'a, impl Iterator<Item=Script> + 'a) {
-        (self.receive.get_scripts(),
-         self.change.get_scripts())
+    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, u32, Script)> + 'a {
+        self.sub.iter().enumerate().flat_map(|(i, s)| s.get_scripts().map(move |(kix, script)| (i as u32, kix, script)))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item=&SubAccount> {
+        self.sub.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut SubAccount> {
+        self.sub.iter_mut()
+    }
+
+    pub fn get(&self, s: u32) -> Option<&SubAccount> {
+        self.sub.get(s as usize)
+    }
+
+    pub fn get_mut (&mut self, s: u32) -> Option<&mut SubAccount> {
+        self.sub.get_mut(s as usize)
     }
 }
 
 /// instantiated key of an account
+#[derive(Clone)]
 pub struct Instantiated {
-    pk: PrivateKey,
-    public: PublicKey,
-    script_code: Script,
-    address: Address,
-    script_pubkey: Script,
+    pub pk: PrivateKey,
+    pub public: PublicKey,
+    pub script_code: Script,
+    pub address: Address,
+    pub script_pubkey: Script,
 }
 
 impl Instantiated {
@@ -180,43 +180,46 @@ pub struct SubAccount {
     key: ExtendedPrivKey,
     instantiated: Vec<Instantiated>,
     next: u32,
+    look_ahead: u32,
     network: Network,
 }
 
 impl SubAccount {
     /// look ahead one more key
-    pub fn look_ahead(&mut self, seen: u32, window: u32) -> Result<(), WalletError> {
+    pub fn look_ahead(&mut self, seen: u32) -> Result<Vec<(u32, Script)>, WalletError> {
         use std::cmp::max;
 
         let have = self.instantiated.len() as u32;
-        let need = max(seen + window, have) - have;
-        for _ in 0..need {
-            self.instantiate_next()?;
+        let need = max(seen + self.look_ahead, have) - have;
+        let mut new = Vec::new();
+        for i in 0..need {
+            new.push((have + i, self.instantiate_next()?.script_pubkey.clone()));
         }
-        Ok(())
+        Ok(new)
     }
 
-    fn instantiate_next(&mut self) -> Result<(), WalletError> {
+    fn instantiate_next(&mut self) -> Result<&Instantiated, WalletError> {
         // keep looking ahead
-        self.instantiated.push(
-            Instantiated::new_from_extended_key(self.address_type, self.network,
-                                                self.instantiated.len() as u32, &self.key,
-                                                self.context.clone())?);
-        Ok(())
+        let instantiated = Instantiated::new_from_extended_key(self.address_type, self.network,
+                                                               self.instantiated.len() as u32, &self.key,
+                                                               self.context.clone())?;
+        let len = self.instantiated.len();
+        self.instantiated.push(instantiated);
+        Ok(&self.instantiated[len])
     }
 
     /// create a new key
-    pub fn next_key(&mut self) -> Result<(u32, PrivateKey), WalletError> {
+    pub fn next_key(&mut self) -> Result<(u32, &Instantiated), WalletError> {
         // keep looking ahead
         self.instantiate_next()?;
 
         // get next key
         let kix = self.next;
-        let pk = self.instantiated[kix as usize].pk.clone();
+        let ref instantiated = self.instantiated[kix as usize];
         self.next += 1;
 
 
-        Ok((kix, pk))
+        Ok((kix, instantiated))
     }
 
     pub fn add_script_key(&mut self, pk: PrivateKey, script_code: Script) -> Result<u32, WalletError> {
@@ -236,8 +239,8 @@ impl SubAccount {
     }
 
     // get all pubkey scripts of this account
-    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=Script> + 'a {
-        self.instantiated.iter().map(|i| i.script_pubkey.clone())
+    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, Script)> + 'a {
+        self.instantiated.iter().enumerate().map(|(kix, i)| (kix as u32, i.script_pubkey.clone()))
     }
 
     /// get a previously created private key for an index with optional additive tweak
@@ -307,7 +310,7 @@ impl SubAccount {
                             input.witness.push(instantiated.public.to_bytes());
                             signed += 1;
                         }
-                        AccountAddressType::P2WSH(n) => {
+                        AccountAddressType::P2WSH(_) => {
                             if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
                                 return Err(WalletError::Unsupported("can only sig all inputs for now"));
                             }
@@ -342,15 +345,16 @@ mod test {
     use context::MasterKeyEntropy;
 
     use super::*;
+    use masteraccount::MasterAccount;
 
     #[test]
     fn test_pkh() {
-        let ctx = Arc::new(SecpContext::new());
-        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        let mut account = Account::new(ctx.clone(), master, AccountAddressType::P2PKH, None, 0, 0, 10, Network::Bitcoin).unwrap();
-        let (ix, pk) = account.receive.next_key().unwrap();
-        let source = account.receive.get_address(ix).unwrap();
-        let target = account.receive.get_address(ix).unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
+        master.add_account(AccountAddressType::P2PKH, 1, 10).unwrap();
+        let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
+        let (_, i) = account.next_key().unwrap();
+        let source = i.address.clone();
+        let target = i.address.clone();
         let input_transaction = Transaction {
             input: vec![
                 TxIn {
@@ -393,19 +397,19 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(input_transaction.txid(), input_transaction.clone());
 
-        assert_eq!(account.receive.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
+        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
 
     #[test]
     fn test_wpkh() {
-        let ctx = Arc::new(SecpContext::new());
-        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        let mut account = Account::new(ctx.clone(), master, AccountAddressType::P2WPKH, None, 0, 0, 10, Network::Bitcoin).unwrap();
-        let (ix, pk) = account.receive.next_key().unwrap();
-        let source = account.receive.get_address(ix).unwrap();
-        let target = account.receive.get_address(ix).unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
+        master.add_account(AccountAddressType::P2WPKH, 1, 10).unwrap();
+        let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
+        let (_, i) = account.next_key().unwrap();
+        let source = i.address.clone();
+        let target = i.address.clone();
 
         let input_transaction = Transaction {
             input: vec![
@@ -449,19 +453,19 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(txid, input_transaction.clone());
 
-        assert_eq!(account.receive.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
+        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
 
     #[test]
     fn test_shwpkh() {
-        let ctx = Arc::new(SecpContext::new());
-        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        let mut account = Account::new(ctx.clone(), master, AccountAddressType::P2SHWPKH, None, 0, 0, 10, Network::Bitcoin).unwrap();
-        let (ix, pk) = account.receive.next_key().unwrap();
-        let source = account.receive.get_address(ix).unwrap();
-        let target = account.receive.get_address(ix).unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
+        master.add_account(AccountAddressType::P2SHWPKH, 1, 10).unwrap();
+        let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
+        let (_, i) = account.next_key().unwrap();
+        let source = i.address.clone();
+        let target = i.address.clone();
 
         let input_transaction = Transaction {
             input: vec![
@@ -506,7 +510,7 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(txid, input_transaction.clone());
 
-        assert_eq!(account.receive.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
+        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
@@ -514,11 +518,20 @@ mod test {
     #[test]
     fn test_wsh() {
         let ctx = Arc::new(SecpContext::new());
-        let (master, _, _) = ctx.new_master_private_key(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        let mut base_account = Account::new(ctx.clone(), master, AccountAddressType::P2SHWPKH, None, 0, 0, 10, Network::Bitcoin).unwrap();
-        let mut account = Account::new(ctx.clone(), master, AccountAddressType::P2WSH(4711), None, 0, 0, 0, Network::Bitcoin).unwrap();
 
-        let (_, pk) = base_account.receive.next_key().unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
+        master.add_account(AccountAddressType::P2SHWPKH, 1, 10).unwrap();
+        master.add_account(AccountAddressType::P2WSH(4711), 1, 0).unwrap();
+
+        let pk;
+        {
+            let base_account = master.get_mut(0).unwrap().get_mut(0).unwrap();
+            let (_, i) = base_account.next_key().unwrap();
+            pk = i.pk;
+        }
+        let account = master.get_mut(1).unwrap().get_mut(0).unwrap();
+
+
         // optional: add some tweak
         let pk = ctx.tweak_add(&pk, &[0x01; 32]).unwrap();
 
@@ -530,10 +543,9 @@ mod test {
             .push_opcode(all::OP_CHECKSIG)
             .into_script();
 
-
-        let ix = account.receive.add_script_key(pk, scrip_code).unwrap();
-        let source = account.receive.get_address(ix).unwrap();
-        let target = account.receive.get_address(ix).unwrap();
+        let ix = account.add_script_key(pk, scrip_code).unwrap();
+        let source = account.get_address(ix).unwrap();
+        let target = account.get_address(ix).unwrap();
         let input_transaction = Transaction {
             input: vec![
                 TxIn {
@@ -576,7 +588,7 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(input_transaction.txid(), input_transaction.clone());
 
-        assert_eq!(account.receive.sign(
+        assert_eq!(account.sign(
             &mut spending_transaction, SigHashType::All,
             |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
 

@@ -27,15 +27,14 @@ use error::WalletError;
 use mnemonic::Mnemonic;
 use account::{Account,AccountAddressType};
 use std::sync::Arc;
-use std::collections::HashMap;
 
 // a factory for TREZOR (BIP44) compatible accounts
 pub struct MasterAccount {
     master_key: ExtendedPrivKey,
     encrypted: Vec<u8>,
     context: Arc<SecpContext>,
-    network: Network,
-    accounts: HashMap<AccountAddressType, Vec<Account>>
+    accounts: Vec<Account>,
+    network: Network
 }
 
 impl MasterAccount {
@@ -43,22 +42,20 @@ impl MasterAccount {
     pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str) -> Result<MasterAccount, WalletError> {
         let context = SecpContext::new();
         let (master_key, _, encrypted) = context.new_master_private_key (entropy, network, passphrase, salt)?;
-        Ok(MasterAccount { context: Arc::new(context), master_key, encrypted, network, accounts: HashMap::new()})
+        Ok(MasterAccount { context: Arc::new(context), master_key, encrypted, accounts: Vec::new(), network})
     }
 
     /// decrypt stored master key
-    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str, births: HashMap<AccountAddressType, Vec<(u64, u32, u32)>>, look_ahead: u32) -> Result<MasterAccount, WalletError> {
+    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str, births: Vec<(AccountAddressType, u64, Vec<u32>)>, look_ahead: u32) -> Result<MasterAccount, WalletError> {
         let mnemonic = Mnemonic::new (encrypted, passphrase)?;
         let context = Arc::new(SecpContext::new());
         let master_key = context.master_private_key(network, &Seed::new(&mnemonic, salt))?;
-        let mut accounts = HashMap::new();
-        for (a, births) in births.iter() {
-            for (i, (b, rlen, clen)) in births.iter().enumerate() {
-                accounts.entry(*a).or_insert(Vec::new()).push(
-                Self::new_account(context.clone(), &master_key, i as u32, *a, Some(*b), *rlen, *clen, look_ahead)?);
-            }
+        let mut accounts = Vec::new();
+        for (i, (at, birth, subs)) in births.iter().enumerate() {
+            let account = Self::new_account(context.clone(), &master_key, i as u32, *at, Some(*birth), subs.clone(), look_ahead)?;
+            accounts.push(account);
         }
-        Ok(MasterAccount { context, master_key, encrypted: encrypted.to_vec(), network, accounts})
+        Ok(MasterAccount { context, master_key, encrypted: encrypted.to_vec(), accounts, network})
     }
 
     /// get a copy of the master public key
@@ -66,54 +63,35 @@ impl MasterAccount {
         self.context.extended_public_from_private(&self.master_key)
     }
 
-    pub fn next_account(&mut self, address_type: AccountAddressType, look_ahead: u32) -> Result<usize, WalletError> {
-        let accounts = self.accounts.entry(address_type).or_insert(Vec::new());
-        let account = Self::new_account(self.context.clone(), &self.master_key, accounts.len() as u32, address_type, None, 0, 0, look_ahead)?;
-        accounts.push(account);
-        Ok(accounts.len())
+    pub fn add_account(&mut self, address_type: AccountAddressType, nsubs: u32, look_ahead: u32) -> Result<u32, WalletError> {
+        let len = self.accounts.len() as u32;
+        let account = Self::new_account(self.context.clone(), &self.master_key, len, address_type, None, vec!(0u32;nsubs as usize), look_ahead)?;
+        self.accounts.push(account);
+        Ok(len)
     }
 
-    pub fn number_of_accounts(&self, address_type: AccountAddressType) -> usize {
-        if let Some(v) = self.accounts.get(&address_type) {
-            v.len()
-        }
-        else {
-            0
-        }
+    pub fn iter(&self) -> impl Iterator<Item=&Account> {
+        self.accounts.iter()
     }
 
-    pub fn get_account (&self, address_type: AccountAddressType, index: usize) -> Option<&Account> {
-        if let Some(v) = self.accounts.get(&address_type) {
-            v.get(index)
-        }
-        else {
-            None
-        }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut Account> {
+        self.accounts.iter_mut()
     }
 
-    pub fn get_account_mut (&mut self, address_type: AccountAddressType, index: usize) -> Option<&mut Account> {
-        if let Some(v) = self.accounts.get_mut(&address_type) {
-            v.get_mut(index)
-        }
-        else {
-            None
-        }
+    pub fn get(&self, account: u32) -> Option<&Account> {
+        self.accounts.get(account as usize)
     }
 
-    pub fn get_scripts(&self) -> HashMap<(AccountAddressType, usize), (HashMap<Script, usize>, HashMap<Script, usize>)> {
-        self.accounts.iter().enumerate()
-            .flat_map(|(i, (t, a))|
-                a.iter()
-                    .map(move |a| ((*t, i), {
-                        let scripts = a.get_scripts();
-                        (scripts.0.enumerate().map(|(n, s)| (s, n)).collect(),
-                         scripts.1.enumerate().map(|(n, s)| (s, n)).collect())
-                    }
-                    ))).collect()
+    pub fn get_mut(&mut self, account: u32) -> Option<&mut Account> {
+        self.accounts.get_mut(account as usize)
+    }
+
+    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, u32, u32, Script)> + 'a {
+        self.accounts.iter().enumerate().flat_map(|(i, a)| a.get_scripts().map(move |(a, sa, s)| (i as u32, a, sa, s)))
     }
 
     /// create an account
-    fn new_account (context: Arc<SecpContext>, master_key: &ExtendedPrivKey, account_number: u32, address_type: AccountAddressType, birth: Option<u64>, clen: u32, rlen: u32, look_ahead: u32) -> Result<Account, WalletError> {
+    fn new_account (context: Arc<SecpContext>, master_key: &ExtendedPrivKey, account_number: u32, address_type: AccountAddressType, birth: Option<u64>, used: Vec<u32>, look_ahead: u32) -> Result<Account, WalletError> {
         let mut key = match address_type {
             AccountAddressType::P2PKH => context.private_child(&master_key, ChildNumber::Hardened { index: 44 })?,
             AccountAddressType::P2SHWPKH => context.private_child(&master_key, ChildNumber::Hardened { index: 49 })?,
@@ -126,6 +104,6 @@ impl MasterAccount {
             Network::Regtest => context.private_child(&key, ChildNumber::Hardened { index: 1 })?
         };
         key = context.private_child(&key, ChildNumber::Hardened { index: account_number })?;
-        Account::new(context.clone(), key, address_type, birth, clen, rlen, look_ahead, key.network )
+        Account::new(context.clone(), key, address_type, birth, used, look_ahead, key.network )
     }
 }
