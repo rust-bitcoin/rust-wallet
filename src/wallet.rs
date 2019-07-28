@@ -29,7 +29,7 @@ use crate::error::WalletError;
 
 /// A wallet
 pub struct Wallet {
-    master: MasterAccount,
+    pub master: MasterAccount,
     owned: HashMap<OutPoint, TxOut>,
     proofs: HashMap<sha256d::Hash, ProvedTransaction>,
     headers: Vec<BlockHeader>,
@@ -37,7 +37,6 @@ pub struct Wallet {
 }
 
 impl Wallet {
-
     /// get the tip hash of the header chain
     pub fn get_tip (&self) -> Option<&BlockHeader> {
         self.headers.last()
@@ -140,13 +139,20 @@ impl Wallet {
     }
 
     pub fn get_coins<V> (&self,  minimum: u64, scripts: impl Iterator<Item=Script>, validator: V) -> Vec<(OutPoint, TxOut)>
-        where V: Fn(&TxOut) -> bool {
+        where V: Fn(u32, &Script) -> bool {
         let mut sum = 0u64;
         scripts.flat_map(|s| self.owned.iter()
-            .filter_map(|(p, o)| if o.script_pubkey == s && validator(o) {
+            .filter_map(|(p, o)| if o.script_pubkey == s && validator(self.proofs.get(&p.txid).unwrap().block_height, &o.script_pubkey) {
                 Some((p.clone(), o.clone()))
             }else{None}).collect::<Vec<(OutPoint, TxOut)>>())
             .take_while(move |(p, o)| {sum += o.value; sum < minimum}).collect::<Vec<(OutPoint, TxOut)>>()
+    }
+
+    pub fn get_confirmed_height(&self, txid: &sha256d::Hash) -> Result<u32, WalletError> {
+        if let Some(proof) = self.proofs.get(txid) {
+            return Ok(proof.block_height);
+        }
+        return Err(WalletError::Unsupported("not a confirmed transaction"));
     }
 }
 

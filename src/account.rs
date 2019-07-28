@@ -222,6 +222,13 @@ impl SubAccount {
         Ok((kix, instantiated))
     }
 
+    /// get last instantiated key
+    pub fn last_key (&self) -> (u32, &Instantiated) {
+        let kix = self.next;
+        let ref instantiated = self.instantiated[kix as usize];
+        (kix, instantiated)
+    }
+
     pub fn add_script_key(&mut self, pk: PrivateKey, script_code: Script) -> Result<u32, WalletError> {
         match self.address_type {
             AccountAddressType::P2WSH(_) => {}
