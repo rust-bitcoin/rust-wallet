@@ -40,3 +40,4 @@ pub mod context;
 pub mod masteraccount;
 pub mod account;
 pub mod wallet;
+pub mod proved;
