@@ -23,59 +23,25 @@ use bitcoin_hashes::sha256d;
 use bitcoin::{OutPoint, TxOut};
 use bitcoin::Block;
 use std::collections::HashMap;
-use crate::masteraccount::MasterAccount;
-use crate::error::WalletError;
-use crate::proved::ProvedTransaction;
-
+use masteraccount::MasterAccount;
+use error::WalletError;
+use proved::ProvedTransaction;
+use trunk::Trunk;
 
 /// A wallet
 pub struct Wallet {
     pub master: MasterAccount,
     owned: HashMap<OutPoint, TxOut>,
     proofs: HashMap<sha256d::Hash, ProvedTransaction>,
-    headers: Vec<BlockHeader>,
+    trunk: Box<dyn Trunk>,
     processed_height: u32
 }
 
 impl Wallet {
-    /// get the tip hash of the header chain
-    pub fn get_tip (&self) -> Option<&BlockHeader> {
-        self.headers.last()
-    }
-
-    /// get the chain height
-    pub fn get_height(&self) -> u32 {
-        self.headers.len() as u32
-    }
-
-    /// add a header to the tip of the chain
-    /// the caller should do SPV check and evtl. unwind
-    /// before adding this header after a reorg.
-    pub fn add_header(&mut self, header: BlockHeader) -> Result<(), WalletError> {
-        if self.headers.len() > 0 {
-            if self.get_tip().unwrap().bitcoin_hash() == header.prev_blockhash {
-                self.headers.push(header);
-            }
-            else {
-                return Err(WalletError::Unsupported("only add header connected to tip"));
-            }
-        }
-        else {
-            // add genesis
-            self.headers.push(header);
-        }
-        Ok(())
-    }
-
     /// unwind the tip
     pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) -> Result<(), WalletError> {
-        let len = self.headers.len();
-        if self.headers[len-1].bitcoin_hash() != *block_hash {
-            return Err(WalletError::Unsupported("can only unwind the tip"));
-        }
-        if len > 0 {
-            self.headers.remove(len-1);
-            if self.processed_height as usize == len-1 {
+        if let Some(tip) = self.trunk.get_tip() {
+            if self.processed_height == self.trunk.len() + 1 {
                 // this means we might have lost control of coins at least temporarily
                 let lost_coins = self.proofs.values()
                     .filter_map(|t| if *t.get_block_hash() == *block_hash {
@@ -88,19 +54,10 @@ impl Wallet {
                     self.owned.remove(&point);
                 }
                 self.processed_height -= 1;
+                return Ok(())
             }
-            return Ok(())
         }
-        Err(WalletError::Unsupported("unwind on empty chain"))
-    }
-    /// skip blocks before birth of our keys
-    pub fn skip_blocks (&mut self, birth: u64) {
-        if let Some(later) = self.headers.iter().position(|h| h.time as u64 > birth) {
-            self.processed_height = (later - 1) as u32;
-        }
-        else {
-            self.processed_height = (self.headers.len()-1) as u32;
-        }
+        Err(WalletError::Unsupported("unwind not on tip"))
     }
 
     /// process a block
@@ -109,37 +66,39 @@ impl Wallet {
         if height < self.processed_height {
             return Err(WalletError::Unsupported("can only process blocks in consecutive order"));
         }
-        if block.header.bitcoin_hash() != self.headers[height as usize].bitcoin_hash() {
-            return Err(WalletError::Unsupported("not the block expected"));
-        }
+        if let Some(h) = self.trunk.get_height(&block.header.bitcoin_hash()) {
+            if h != height {
+                return Err(WalletError::Unsupported("not the block expected at this height"));
+            }
+            let mut scripts: HashMap<Script, (u32, u32, u32)> = self.master.get_scripts()
+                .map(|(a, sub, k, s)| (s, (a, sub, k))).collect();
 
-        let mut scripts : HashMap<Script, (u32, u32, u32)> = self.master.get_scripts()
-            .map(|(a, sub, k, s)| (s, (a, sub, k))).collect();
+            let mut spends = Vec::new();
 
-        let mut spends = Vec::new();
-
-        for (txnr, tx) in block.txdata.iter().enumerate() {
-            for input in tx.input.iter().skip(1) {
-                if let Some(spend) = self.owned.remove(&input.previous_output) {
-                    spends.push((input.previous_output.clone(), spend.clone()));
+            for (txnr, tx) in block.txdata.iter().enumerate() {
+                for input in tx.input.iter().skip(1) {
+                    if let Some(spend) = self.owned.remove(&input.previous_output) {
+                        spends.push((input.previous_output.clone(), spend.clone()));
+                    }
+                }
+                for (vout, output) in tx.output.iter().enumerate() {
+                    let mut lookahead = Vec::new();
+                    if let Some((a, sub, seen)) = scripts.get(&output.script_pubkey) {
+                        lookahead =
+                            self.master.get_mut(*a).unwrap().get_mut(*sub).unwrap().look_ahead(*seen).unwrap()
+                                .iter().map(move |(kix, s)| (*a, *sub, *kix, s.clone())).collect();
+                        self.owned.insert(OutPoint { txid: tx.txid(), vout: vout as u32 }, output.clone());
+                        self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
+                    }
+                    for (a, sub, kix, s) in lookahead {
+                        scripts.insert(s, (a, sub, kix));
+                    }
                 }
             }
-            for (vout, output) in tx.output.iter().enumerate() {
-                let mut lookahead = Vec::new();
-                if let Some((a, sub, seen)) = scripts.get(&output.script_pubkey) {
-                    lookahead =
-                        self.master.get_mut(*a).unwrap().get_mut(*sub).unwrap().look_ahead(*seen).unwrap()
-                            .iter().map(move |(kix, s)| (*a, *sub, *kix, s.clone())).collect();
-                    self.owned.insert(OutPoint{txid: tx.txid(), vout: vout as u32}, output.clone());
-                    self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
-                }
-                for (a, sub, kix, s) in lookahead {
-                    scripts.insert(s, (a, sub, kix));
-                }
-            }
+            self.processed_height = height;
+            return Ok(());
         }
-        self.processed_height = height;
-        Ok(())
+        Err(WalletError::Unsupported("block is not on trunk"))
     }
 
     pub fn get_coins<V> (&self,  minimum: u64, scripts: impl Iterator<Item=Script>, validator: V) -> Vec<(OutPoint, TxOut)>
