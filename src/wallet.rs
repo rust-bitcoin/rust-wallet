@@ -19,8 +19,8 @@
 //!
 
 use bitcoin::{BitcoinHash, BlockHeader, Script};
-use bitcoin_hashes::{Hash, HashEngine, sha256d};
-use bitcoin::{OutPoint, TxOut, Transaction};
+use bitcoin_hashes::sha256d;
+use bitcoin::{OutPoint, TxOut};
 use bitcoin::Block;
 use std::collections::HashMap;
 use crate::masteraccount::MasterAccount;
@@ -68,14 +68,17 @@ impl Wallet {
     }
 
     /// unwind the tip
-    pub fn unwind_tip(&mut self) -> Result<(), WalletError> {
+    pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) -> Result<(), WalletError> {
         let len = self.headers.len();
+        if self.headers[len-1].bitcoin_hash() != *block_hash {
+            return Err(WalletError::Unsupported("can only unwind the tip"));
+        }
         if len > 0 {
             self.headers.remove(len-1);
             if self.processed_height as usize == len-1 {
                 // this means we might have lost control of coins at least temporarily
                 let lost_coins = self.proofs.values()
-                    .filter_map(|t| if t.get_block_height() as usize == len - 1 {
+                    .filter_map(|t| if *t.get_block_hash() == *block_hash {
                         Some(t.get_transaction().txid())
                     } else { None })
                     .flat_map(|txid| self.owned.keys().filter(move |point| point.txid == txid)).cloned().collect::<Vec<OutPoint>>();
@@ -128,7 +131,7 @@ impl Wallet {
                         self.master.get_mut(*a).unwrap().get_mut(*sub).unwrap().look_ahead(*seen).unwrap()
                             .iter().map(move |(kix, s)| (*a, *sub, *kix, s.clone())).collect();
                     self.owned.insert(OutPoint{txid: tx.txid(), vout: vout as u32}, output.clone());
-                    self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(height, block, txnr));
+                    self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
                 }
                 for (a, sub, kix, s) in lookahead {
                     scripts.insert(s, (a, sub, kix));
@@ -140,19 +143,12 @@ impl Wallet {
     }
 
     pub fn get_coins<V> (&self,  minimum: u64, scripts: impl Iterator<Item=Script>, validator: V) -> Vec<(OutPoint, TxOut)>
-        where V: Fn(u32, &Script) -> bool {
+        where V: Fn(&sha256d::Hash, &Script) -> bool {
         let mut sum = 0u64;
         scripts.flat_map(|s| self.owned.iter()
-            .filter_map(|(p, o)| if o.script_pubkey == s && validator(self.proofs.get(&p.txid).unwrap().get_block_height(), &o.script_pubkey) {
+            .filter_map(|(p, o)| if o.script_pubkey == s && validator(self.proofs.get(&p.txid).unwrap().get_block_hash(), &o.script_pubkey) {
                 Some((p.clone(), o.clone()))
             }else{None}).collect::<Vec<(OutPoint, TxOut)>>())
-            .take_while(move |(p, o)| {sum += o.value; sum < minimum}).collect::<Vec<(OutPoint, TxOut)>>()
-    }
-
-    pub fn get_confirmed_height(&self, txid: &sha256d::Hash) -> Result<u32, WalletError> {
-        if let Some(proof) = self.proofs.get(txid) {
-            return Ok(proof.get_block_height());
-        }
-        return Err(WalletError::Unsupported("not a confirmed transaction"));
+            .take_while(move |(_, o)| {sum += o.value; sum < minimum}).collect::<Vec<(OutPoint, TxOut)>>()
     }
 }

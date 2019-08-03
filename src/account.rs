@@ -346,7 +346,7 @@ mod test {
     use bitcoin::blockdata::opcodes::all;
     use bitcoin::blockdata::script::Builder;
     use bitcoin::blockdata::transaction::{OutPoint, TxIn, TxOut};
-    use bitcoin_hashes::{Hash, hash160, sha256d};
+    use bitcoin_hashes::sha256d;
 
     use context::MasterKeyEntropy;
 

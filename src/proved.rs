@@ -18,7 +18,7 @@
 //!
 //!
 
-use bitcoin::{BlockHeader, Block, Transaction};
+use bitcoin::{Block, Transaction, BitcoinHash};
 use bitcoin_hashes::{sha256d, HashEngine, Hash};
 
 /// A confirmed transaction with its SPV proof
@@ -26,14 +26,15 @@ use bitcoin_hashes::{sha256d, HashEngine, Hash};
 pub struct ProvedTransaction {
     transaction: Transaction,
     merkle_path: Vec<(bool, sha256d::Hash)>,
-    block_height: u32
+    block_hash: sha256d::Hash
 }
 
 impl ProvedTransaction {
-    pub fn new (block_height: u32, block: &Block, txnr: usize) -> ProvedTransaction {
+    pub fn new (block: &Block, txnr: usize) -> ProvedTransaction {
         let transaction = block.txdata[txnr].clone();
         ProvedTransaction {
-            block_height, merkle_path: Self::compute_proof(txnr, block),
+            block_hash: block.header.bitcoin_hash(),
+            merkle_path: Self::compute_proof(txnr, block),
             transaction
         }
     }
@@ -42,16 +43,8 @@ impl ProvedTransaction {
         self.transaction.clone()
     }
 
-    pub fn get_block_height (&self) -> u32 {
-        self.block_height
-    }
-
-    /// Prove that the transaction is connected to a header with SPV proof
-    pub fn prove (&self, headers: &[BlockHeader]) -> bool {
-        if headers.len() <= (self.block_height as usize) {
-            return false;
-        }
-        self.merkle_root() == headers[self.block_height as usize].merkle_root
+    pub fn get_block_hash (&self) -> &sha256d::Hash {
+        &self.block_hash
     }
 
     /// compute the merkle root implied by the SPV proof
@@ -135,7 +128,7 @@ mod test {
             let pt = ProvedTransaction {
                 transaction: tx.clone(),
                 merkle_path: proof,
-                block_height: 0
+                block_hash: block.header.bitcoin_hash()
             };
             assert_eq!(pt.merkle_root(), block.header.merkle_root);
         }
