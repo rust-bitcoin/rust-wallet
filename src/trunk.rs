@@ -25,6 +25,7 @@ use bitcoin_hashes::sha256d;
 pub trait Trunk {
     fn is_on_trunk (&self, block_hash: &sha256d::Hash) -> bool;
     fn get_header (&self, block_hash: &sha256d::Hash) -> Option<BlockHeader>;
+    fn get_header_for_height (&self, height: u32) -> Option<BlockHeader>;
     fn get_height (&self, block_hash: &sha256d::Hash) -> Option<u32>;
     fn get_tip (&self) -> Option<BlockHeader>;
     fn len(&self) -> u32;
