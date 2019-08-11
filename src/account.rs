@@ -63,9 +63,7 @@ pub struct Account {
 
 impl Account {
     /// create a new account
-    pub fn new(context: Arc<SecpContext>, key: ExtendedPrivKey, address_type: AccountAddressType, birth: Option<u64>, used: Vec<u32>, look_ahead: u32, network: Network) -> Result<Account, WalletError> {
-        let birth = birth.unwrap_or(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs());
-
+    pub fn new(context: Arc<SecpContext>, key: ExtendedPrivKey, address_type: AccountAddressType, birth: u64, used: Vec<u32>, look_ahead: u32, network: Network) -> Result<Account, WalletError> {
         let mut sub = Vec::new();
         for (i, u) in used.iter().enumerate() {
             let mut s = SubAccount {
@@ -356,7 +354,7 @@ mod test {
     #[test]
     fn test_pkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2PKH, 1, 10).unwrap();
+        master.add_account(AccountAddressType::P2PKH, 1, 10, None).unwrap();
         let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
         let (_, i) = account.next_key().unwrap();
         let source = i.address.clone();
@@ -411,7 +409,7 @@ mod test {
     #[test]
     fn test_wpkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2WPKH, 1, 10).unwrap();
+        master.add_account(AccountAddressType::P2WPKH, 1, 10, None).unwrap();
         let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
         let (_, i) = account.next_key().unwrap();
         let source = i.address.clone();
@@ -467,7 +465,7 @@ mod test {
     #[test]
     fn test_shwpkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2SHWPKH, 1, 10).unwrap();
+        master.add_account(AccountAddressType::P2SHWPKH, 1, 10, None).unwrap();
         let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
         let (_, i) = account.next_key().unwrap();
         let source = i.address.clone();
@@ -526,8 +524,8 @@ mod test {
         let ctx = Arc::new(SecpContext::new());
 
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2SHWPKH, 1, 10).unwrap();
-        master.add_account(AccountAddressType::P2WSH(4711), 1, 0).unwrap();
+        master.add_account(AccountAddressType::P2SHWPKH, 1, 10, None).unwrap();
+        master.add_account(AccountAddressType::P2WSH(4711), 1, 0, None).unwrap();
 
         let pk;
         {

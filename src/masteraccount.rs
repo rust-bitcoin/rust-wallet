@@ -27,6 +27,7 @@ use error::WalletError;
 use mnemonic::Mnemonic;
 use account::{Account,AccountAddressType};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // a factory for TREZOR (BIP44) compatible accounts
 pub struct MasterAccount {
@@ -34,7 +35,8 @@ pub struct MasterAccount {
     encrypted: Vec<u8>,
     context: Arc<SecpContext>,
     accounts: Vec<Account>,
-    network: Network
+    network: Network,
+    birth: u64
 }
 
 impl MasterAccount {
@@ -42,20 +44,17 @@ impl MasterAccount {
     pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, salt: &str) -> Result<MasterAccount, WalletError> {
         let context = SecpContext::new();
         let (master_key, _, encrypted) = context.new_master_private_key (entropy, network, passphrase, salt)?;
-        Ok(MasterAccount { context: Arc::new(context), master_key, encrypted, accounts: Vec::new(), network})
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        Ok(MasterAccount { context: Arc::new(context), master_key, encrypted, accounts: Vec::new(), network, birth: now})
     }
 
-    /// decrypt stored master key
-    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str, births: Vec<(AccountAddressType, u64, Vec<u32>)>, look_ahead: u32) -> Result<MasterAccount, WalletError> {
+    /// decrypt stored master account
+    pub fn decrypt (encrypted: &[u8], network: Network, passphrase: &str, salt: &str, birth: u64) -> Result<MasterAccount, WalletError> {
         let mnemonic = Mnemonic::new (encrypted, passphrase)?;
         let context = Arc::new(SecpContext::new());
         let master_key = context.master_private_key(network, &Seed::new(&mnemonic, salt))?;
-        let mut accounts = Vec::new();
-        for (i, (at, birth, subs)) in births.iter().enumerate() {
-            let account = Self::new_account(context.clone(), &master_key, i as u32, *at, Some(*birth), subs.clone(), look_ahead)?;
-            accounts.push(account);
-        }
-        Ok(MasterAccount { context, master_key, encrypted: encrypted.to_vec(), accounts, network})
+        let accounts = Vec::new();
+        Ok(MasterAccount { context, master_key, encrypted: encrypted.to_vec(), accounts, network, birth})
     }
 
     /// get a copy of the master public key
@@ -63,9 +62,10 @@ impl MasterAccount {
         self.context.extended_public_from_private(&self.master_key)
     }
 
-    pub fn add_account(&mut self, address_type: AccountAddressType, nsubs: u32, look_ahead: u32) -> Result<u32, WalletError> {
+    pub fn add_account(&mut self, address_type: AccountAddressType, nsubs: u32, look_ahead: u32, birth: Option<u64>) -> Result<u32, WalletError> {
+        let birth = if birth.is_some() { std::cmp::max(self.birth, birth.unwrap()) } else { self.birth };
         let len = self.accounts.len() as u32;
-        let account = Self::new_account(self.context.clone(), &self.master_key, len, address_type, None, vec!(0u32;nsubs as usize), look_ahead)?;
+        let account = Self::new_account(self.context.clone(), &self.master_key, len, address_type, self.birth, vec!(0u32;nsubs as usize), look_ahead)?;
         self.accounts.push(account);
         Ok(len)
     }
@@ -91,7 +91,7 @@ impl MasterAccount {
     }
 
     /// create an account
-    fn new_account (context: Arc<SecpContext>, master_key: &ExtendedPrivKey, account_number: u32, address_type: AccountAddressType, birth: Option<u64>, used: Vec<u32>, look_ahead: u32) -> Result<Account, WalletError> {
+    fn new_account (context: Arc<SecpContext>, master_key: &ExtendedPrivKey, account_number: u32, address_type: AccountAddressType, birth: u64, used: Vec<u32>, look_ahead: u32) -> Result<Account, WalletError> {
         let mut key = match address_type {
             AccountAddressType::P2PKH => context.private_child(&master_key, ChildNumber::Hardened { index: 44 })?,
             AccountAddressType::P2SHWPKH => context.private_child(&master_key, ChildNumber::Hardened { index: 49 })?,
