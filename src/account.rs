@@ -20,7 +20,6 @@
 //!
 
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use bitcoin::{
     Address, blockdata::{
@@ -354,7 +353,7 @@ mod test {
     #[test]
     fn test_pkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2PKH, 1, 10, None).unwrap();
+        master.add_account(AccountAddressType::P2PKH, vec!(0), 10, None).unwrap();
         let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
         let (_, i) = account.next_key().unwrap();
         let source = i.address.clone();
@@ -409,7 +408,7 @@ mod test {
     #[test]
     fn test_wpkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2WPKH, 1, 10, None).unwrap();
+        master.add_account(AccountAddressType::P2WPKH, vec!(0), 10, None).unwrap();
         let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
         let (_, i) = account.next_key().unwrap();
         let source = i.address.clone();
@@ -465,7 +464,7 @@ mod test {
     #[test]
     fn test_shwpkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2SHWPKH, 1, 10, None).unwrap();
+        master.add_account(AccountAddressType::P2SHWPKH, vec!(0), 10, None).unwrap();
         let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
         let (_, i) = account.next_key().unwrap();
         let source = i.address.clone();
@@ -524,8 +523,8 @@ mod test {
         let ctx = Arc::new(SecpContext::new());
 
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2SHWPKH, 1, 10, None).unwrap();
-        master.add_account(AccountAddressType::P2WSH(4711), 1, 0, None).unwrap();
+        master.add_account(AccountAddressType::P2SHWPKH, vec!(0), 10, None).unwrap();
+        master.add_account(AccountAddressType::P2WSH(4711), vec!(0), 0, None).unwrap();
 
         let pk;
         {

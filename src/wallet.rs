@@ -18,7 +18,7 @@
 //!
 //!
 
-use bitcoin::{BitcoinHash, BlockHeader, Script};
+use bitcoin::{BitcoinHash, Script};
 use bitcoin_hashes::sha256d;
 use bitcoin::{OutPoint, TxOut};
 use bitcoin::Block;

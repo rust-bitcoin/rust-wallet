@@ -62,10 +62,10 @@ impl MasterAccount {
         self.context.extended_public_from_private(&self.master_key)
     }
 
-    pub fn add_account(&mut self, address_type: AccountAddressType, nsubs: u32, look_ahead: u32, birth: Option<u64>) -> Result<u32, WalletError> {
+    pub fn add_account(&mut self, address_type: AccountAddressType, pos: Vec<u32>, look_ahead: u32, birth: Option<u64>) -> Result<u32, WalletError> {
         let birth = if birth.is_some() { std::cmp::max(self.birth, birth.unwrap()) } else { self.birth };
         let len = self.accounts.len() as u32;
-        let account = Self::new_account(self.context.clone(), &self.master_key, len, address_type, self.birth, vec!(0u32;nsubs as usize), look_ahead)?;
+        let account = Self::new_account(self.context.clone(), &self.master_key, len, address_type, birth, pos, look_ahead)?;
         self.accounts.push(account);
         Ok(len)
     }
