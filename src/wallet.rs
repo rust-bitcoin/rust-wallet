@@ -18,27 +18,29 @@
 //!
 //!
 
-use bitcoin::{BitcoinHash, Script};
 use bitcoin_hashes::sha256d;
 use bitcoin::{OutPoint, TxOut};
 use bitcoin::Block;
 use std::collections::HashMap;
 use account::MasterAccount;
-use error::WalletError;
 use proved::ProvedTransaction;
-use trunk::Trunk;
 
 /// A wallet
 pub struct Wallet {
-    pub master: MasterAccount,
-    owned: HashMap<OutPoint, TxOut>,
+    owned: HashMap<OutPoint, (TxOut, u32, u32, u32, Option<Vec<u8>>)>,
     proofs: HashMap<sha256d::Hash, ProvedTransaction>,
-    trunk: Box<dyn Trunk>,
-    processed_height: u32
 }
 
 impl Wallet {
-    /// unwind the tip
+    pub fn new () -> Wallet {
+        Wallet { owned: HashMap::new(), proofs: HashMap::new() }
+    }
+
+    pub fn prove (&self, txid: &sha256d::Hash) -> Option<&ProvedTransaction> {
+        self.proofs.get(txid)
+    }
+
+    /// unwind the tip of the trunk
     pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) {
         // this means we might have lost control of coins at least temporarily
         let lost_coins = self.proofs.values()
@@ -51,56 +53,59 @@ impl Wallet {
             self.proofs.remove(&point.txid);
             self.owned.remove(&point);
         }
-        self.processed_height = std::cmp::min(self.processed_height, trunk.len());
     }
 
-    /// process a block
-    /// have to process all blocks as we have no BIP158 filters yet
-    pub fn process(&mut self, height: u32, block: &Block) -> Result<(), WalletError> {
-        if height <= self.processed_height {
-            return Err(WalletError::Unsupported("can only process blocks in consecutive order"));
-        }
-        if let Some(h) = self.trunk.get_height(&block.header.bitcoin_hash()) {
-            if h != height {
-                return Err(WalletError::Unsupported("not the block expected at this height"));
-            }
-            let mut scripts: HashMap<Script, (u32, u32, u32)> = self.master.get_scripts()
-                .map(|(a, sub, k, s,_)| (s, (a, sub, k))).collect();
+    /// process a block to find own coins
+    /// processing should be in trunk order and only once per block.
+    /// It is fine to skip blocks
+    pub fn process(&mut self, master_account: &mut MasterAccount, block: &Block) {
+        let mut scripts: HashMap<_,_> = master_account.get_scripts()
+            .map(|(a, sub, k, s, t)| (s, (a, sub, k, t))).collect();
 
-            for (txnr, tx) in block.txdata.iter().enumerate() {
-                for input in tx.input.iter().skip(1) {
-                    self.owned.remove(&input.previous_output);
-                    if self.owned.iter().any(|(point,_)| point.txid == input.previous_output.txid) == false {
-                        self.proofs.remove(&input.previous_output.txid);
-                    }
-                }
-                for (vout, output) in tx.output.iter().enumerate() {
-                    let mut lookahead = Vec::new();
-                    if let Some((a, sub, seen)) = scripts.get(&output.script_pubkey) {
-                        lookahead =
-                            self.master.get_mut((*a, *sub)).unwrap().look_ahead(*seen).unwrap()
-                                .iter().map(move |(kix, s)| (*a, *sub, *kix, s.clone())).collect();
-                        self.owned.insert(OutPoint { txid: tx.txid(), vout: vout as u32 }, output.clone());
-                        self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
-                    }
-                    for (a, sub, kix, s) in lookahead {
-                        scripts.insert(s, (a, sub, kix));
-                    }
+        for (txnr, tx) in block.txdata.iter().enumerate() {
+            for input in tx.input.iter().skip(1) {
+                self.owned.remove(&input.previous_output);
+                if self.owned.iter().any(|(point,_)| point.txid == input.previous_output.txid) == false {
+                    self.proofs.remove(&input.previous_output.txid);
                 }
             }
-            self.processed_height = height;
-            return Ok(());
+            for (vout, output) in tx.output.iter().enumerate() {
+                let mut lookahead = Vec::new();
+                if let Some((a, sub, seen, t)) = scripts.get(&output.script_pubkey) {
+                    lookahead =
+                        master_account.get_mut((*a, *sub)).unwrap().look_ahead(*seen).unwrap()
+                            .iter().map(move |(kix, s)| (*a, *sub, *kix, s.clone(), t.clone())).collect();
+                    self.owned.insert(OutPoint { txid: tx.txid(), vout: vout as u32 },
+                                      (output.clone(), *a, *sub, *seen, t.clone()));
+                    self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
+                }
+                for (a, sub, kix, s, t) in lookahead {
+                    scripts.insert(s, (a, sub, kix, t));
+                }
+            }
         }
-        Err(WalletError::Unsupported("block is not on trunk"))
     }
 
-    pub fn get_coins<V> (&self,  minimum: u64, scripts: impl Iterator<Item=Script>, validator: V) -> Vec<(OutPoint, TxOut)>
-        where V: Fn(&sha256d::Hash, &Script) -> bool {
+    /// get random owned coins of sufficient amount that pass a filter
+    /// The filter is called with parameters:
+    /// block_hash the coin was confirmed in
+    /// transaction id with coin output
+    /// coin output within the transaction
+    /// account number
+    /// sub account number
+    /// key index
+    /// optional tweak
+    pub fn get_coins<V> (&self,  minimum: u64, filter: V) -> Vec<(OutPoint, TxOut, u32, u32, u32, Option<Vec<u8>>)>
+        where V: Fn(&sha256d::Hash, &OutPoint, &TxOut, &u32, &u32, &u32, &Option<Vec<u8>>) -> bool {
         let mut sum = 0u64;
-        scripts.flat_map(|s| self.owned.iter()
-            .filter_map(|(p, o)| if o.script_pubkey == s && validator(self.proofs.get(&p.txid).unwrap().get_block_hash(), &o.script_pubkey) {
-                Some((p.clone(), o.clone()))
-            }else{None}).collect::<Vec<(OutPoint, TxOut)>>())
-            .take_while(move |(_, o)| {sum += o.value; sum < minimum}).collect::<Vec<(OutPoint, TxOut)>>()
+
+        self.owned.iter()
+            .filter_map(|(p, (o, a, sub, k, t))|
+                if filter(self.proofs.get(&p.txid).unwrap().get_block_hash(), &p, &o, a, sub, k, t) {
+                    Some((p.clone(), o.clone(), *a, *sub, *k, t.clone()))
+                }else{
+                    None
+                }
+            ).take_while(move |(_, o, _, _, _, _)| {sum += o.value; sum < minimum}).collect()
     }
 }
