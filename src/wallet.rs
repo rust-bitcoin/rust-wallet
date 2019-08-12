@@ -40,7 +40,10 @@ pub struct Wallet {
 impl Wallet {
     /// unwind the tip
     pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) -> Result<(), WalletError> {
-        if let Some(_) = self.trunk.get_tip() {
+        if let Some(tip) = self.trunk.get_tip() {
+            if tip.bitcoin_hash() != block_hash {
+                return Err(WalletError::Unsupported("unwind not on tip"));
+            }
             if self.processed_height == self.trunk.len() + 1 {
                 // this means we might have lost control of coins at least temporarily
                 let lost_coins = self.proofs.values()
@@ -73,12 +76,11 @@ impl Wallet {
             let mut scripts: HashMap<Script, (u32, u32, u32)> = self.master.get_scripts()
                 .map(|(a, sub, k, s,_)| (s, (a, sub, k))).collect();
 
-            let mut spends = Vec::new();
-
             for (txnr, tx) in block.txdata.iter().enumerate() {
                 for input in tx.input.iter().skip(1) {
-                    if let Some(spend) = self.owned.remove(&input.previous_output) {
-                        spends.push((input.previous_output.clone(), spend.clone()));
+                    self.owned.remove(&input.previous_output);
+                    if self.owned.iter().any(|(point,_)| point.txid == input.previous_output.txid) == false {
+                        self.proofs.remove(&input.previous_output.txid);
                     }
                 }
                 for (vout, output) in tx.output.iter().enumerate() {
