@@ -39,34 +39,25 @@ pub struct Wallet {
 
 impl Wallet {
     /// unwind the tip
-    pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) -> Result<(), WalletError> {
-        if let Some(tip) = self.trunk.get_tip() {
-            if tip.bitcoin_hash() != block_hash {
-                return Err(WalletError::Unsupported("unwind not on tip"));
-            }
-            if self.processed_height == self.trunk.len() + 1 {
-                // this means we might have lost control of coins at least temporarily
-                let lost_coins = self.proofs.values()
-                    .filter_map(|t| if *t.get_block_hash() == *block_hash {
-                        Some(t.get_transaction().txid())
-                    } else { None })
-                    .flat_map(|txid| self.owned.keys().filter(move |point| point.txid == txid)).cloned().collect::<Vec<OutPoint>>();
+    pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) {
+        // this means we might have lost control of coins at least temporarily
+        let lost_coins = self.proofs.values()
+            .filter_map(|t| if *t.get_block_hash() == *block_hash {
+                Some(t.get_transaction().txid())
+            } else { None })
+            .flat_map(|txid| self.owned.keys().filter(move |point| point.txid == txid)).cloned().collect::<Vec<OutPoint>>();
 
-                for point in lost_coins {
-                    self.proofs.remove(&point.txid);
-                    self.owned.remove(&point);
-                }
-                self.processed_height -= 1;
-                return Ok(())
-            }
+        for point in lost_coins {
+            self.proofs.remove(&point.txid);
+            self.owned.remove(&point);
         }
-        Err(WalletError::Unsupported("unwind not on tip"))
+        self.processed_height = std::cmp::min(self.processed_height, trunk.len());
     }
 
     /// process a block
     /// have to process all blocks as we have no BIP158 filters yet
     pub fn process(&mut self, height: u32, block: &Block) -> Result<(), WalletError> {
-        if height < self.processed_height {
+        if height <= self.processed_height {
             return Err(WalletError::Unsupported("can only process blocks in consecutive order"));
         }
         if let Some(h) = self.trunk.get_height(&block.header.bitcoin_hash()) {
