@@ -16,26 +16,166 @@
 //!
 //! # Accounts
 //!
-//! TREZOR compatible accounts (BIP44, BIP49, BIP84)
+//! Accounts compatible with BIP32, BIP39, BIP44, BIP49, BIP84
 //!
 
 use std::sync::Arc;
 
-use bitcoin::{
-    Address, blockdata::{
-        opcodes::all,
-        transaction::{SigHashType, TxOut},
-    }, blockdata::script::Builder, network::constants::Network, OutPoint, PrivateKey,
-    PublicKey,
-    Script,
-    Transaction,
-    util::bip143,
-    util::bip32::{ChildNumber, ExtendedPrivKey},
-};
+use bitcoin::{Address, blockdata::{
+    opcodes::all,
+    transaction::{SigHashType, TxOut},
+}, blockdata::script::Builder, network::constants::Network, OutPoint, PublicKey, Script, Transaction, util::bip143, util::bip32::{ChildNumber, ExtendedPrivKey}, PrivateKey};
 use bitcoin_hashes::{Hash, hash160};
 
 use context::SecpContext;
 use error::WalletError;
+use bitcoin::util::bip32::ExtendedPubKey;
+use crate::mnemonic::Mnemonic;
+use secp256k1::rand::{thread_rng, Rng};
+use std::time::{SystemTime, UNIX_EPOCH};
+use crypto::hmac::Hmac;
+use crypto::sha2::Sha512;
+use crypto::pbkdf2::pbkdf2;
+use std::collections::HashMap;
+
+/// chose your security level
+#[derive(Copy, Clone)]
+pub enum MasterKeyEntropy {
+    Low = 16,
+    Recommended = 32,
+    Paranoid = 64
+}
+
+/// A masterAccount is the root of an account hierarchy
+pub struct MasterAccount {
+    master_public: ExtendedPubKey,
+    encrypted: Vec<u8>,
+    accounts: HashMap<(u32, u32), Account>,
+    birth: u64
+}
+
+impl MasterAccount {
+    /// create a new random master account
+    /// the randomly generated seed leads to the master private key if decrypted with passphrase
+    /// and the optional pd_passphrase (pd for plausible deniability)
+    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, WalletError> {
+        let context = SecpContext::new();
+
+        let mut encrypted = vec!(0u8; entropy as usize);
+        let mut rng = thread_rng();
+        rng.fill_bytes(encrypted.as_mut_slice());
+        let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
+        let seed = Seed::new(&mnemonic, pd_passphrase);
+        let master_key = context.master_private_key(network, &seed)?;
+        let public_master_key = context.extended_public_from_private(&master_key);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        Ok(MasterAccount { master_public: public_master_key, encrypted, accounts: HashMap::new(), birth: now})
+    }
+
+    /// Restore from encrypted store
+    pub fn from_encrypted(encrypted: &[u8], public_master_key: ExtendedPubKey, birth: u64) -> MasterAccount {
+        let encrypted = encrypted.to_vec();
+        MasterAccount { master_public: public_master_key, encrypted, accounts: HashMap::new(), birth }
+    }
+
+    /// get the mnemonic (human readable) representation of the master key
+    pub fn mnemonic (&self, passphrase: &str) -> Result<Mnemonic, WalletError> {
+        Ok(Mnemonic::new(&self.encrypted, passphrase)?)
+    }
+
+    pub fn master_public (&self) ->&ExtendedPubKey {
+        &self.master_public
+    }
+
+    pub fn encrypted(&self) -> &Vec<u8> {
+        &self.encrypted
+    }
+
+    pub fn birth (&self) -> u64 {
+        self.birth
+    }
+
+    pub fn get(&self, account: (u32, u32)) -> Option<&Account> {
+        self.accounts.get(&account)
+    }
+
+    pub fn get_mut(&mut self, account: (u32, u32)) -> Option<&mut Account> {
+        self.accounts.get_mut(&account)
+    }
+
+    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, u32, u32, Script, Option<Vec<u8>>)> + 'a {
+        self.accounts.iter().flat_map(|((an, sub), a)| a.get_scripts().map(move |(kix, s, tweak)| (*an, *sub, kix, s, tweak)))
+    }
+
+    pub fn add_account(&mut self, account: Account) {
+        self.accounts.insert((account.account_number, account.sub_account_number), account);
+    }
+}
+
+/// calculator of private keys
+pub struct Unlocker {
+    master_private: ExtendedPrivKey,
+    network: Network,
+    context: SecpContext,
+    cached: HashMap<AccountAddressType,
+        (ExtendedPrivKey, HashMap<u32,
+            (ExtendedPrivKey, HashMap<u32,ExtendedPrivKey>)>)>,
+}
+
+impl Unlocker {
+    /// decrypt encrypted seed of a master account
+    /// check result if master_public is provided
+    pub fn new (encrypted: &[u8], passphrase: &str, pd_passphrase: Option<&str>, network: Network, master_public: Option<&ExtendedPubKey>) -> Result<Unlocker, WalletError>{
+        let mnemonic = Mnemonic::new (encrypted, passphrase)?;
+        let context = SecpContext::new();
+        let master_private = context.master_private_key(network, &Seed::new(&mnemonic, pd_passphrase))?;
+        if let Some(master_public) = master_public {
+            if network != master_public.network {
+                return Err(WalletError::Network);
+            }
+            if context.extended_public_from_private(&master_private) != *master_public {
+                return Err(WalletError::Passphrase);
+            }
+        }
+        Ok(Unlocker{master_private, network, context, cached: HashMap::new()})
+    }
+
+    pub fn master_private (&self) -> &ExtendedPrivKey {
+        &self.master_private
+    }
+
+    pub fn sub_account_key(&mut self, address_type: AccountAddressType, account: u32, sub_account: u32) -> Result<ExtendedPrivKey, WalletError> {
+        let by_type = self.cached.entry(address_type).or_insert(
+            (
+                match address_type {
+                    AccountAddressType::P2PKH => self.context.private_child(&self.master_private, ChildNumber::Hardened { index: 44 })?,
+                    AccountAddressType::P2SHWPKH => self.context.private_child(&self.master_private, ChildNumber::Hardened { index: 49 })?,
+                    AccountAddressType::P2WPKH => self.context.private_child(&self.master_private, ChildNumber::Hardened { index: 84 })?,
+                    AccountAddressType::P2WSH(index) => self.context.private_child(&self.master_private, ChildNumber::Hardened { index })?
+                }
+                , HashMap::new()));
+        let by_account = by_type.1.entry(account).or_insert(
+            (
+                match self.network {
+                    Network::Bitcoin => self.context.private_child(&by_type.0, ChildNumber::Hardened { index: 0 })?,
+                    Network::Testnet => self.context.private_child(&by_type.0, ChildNumber::Hardened { index: 1 })?,
+                    Network::Regtest => self.context.private_child(&by_type.0, ChildNumber::Hardened { index: 1 })?
+                }
+                ,HashMap::new()));
+        let key = by_account.1.entry(sub_account).or_insert(
+                self.context.private_child(&by_account.0, ChildNumber::Normal { index: sub_account })?);
+        Ok(key.clone())
+    }
+
+    pub fn unlock (&mut self, address_type: AccountAddressType, account: u32, sub_account: u32, index: u32, tweak: Option<Vec<u8>>) -> Result<PrivateKey, WalletError> {
+        let sub_account_key = self.sub_account_key(address_type, account, sub_account)?;
+        let mut key = self.context.private_child(&sub_account_key, ChildNumber::Normal { index: index })?.private_key;
+        if let Some(tweak) = tweak {
+            self.context.tweak_add(&mut key, tweak.as_slice())?;
+        }
+        Ok(key)
+    }
+}
 
 /// Address type an account is using
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
@@ -53,84 +193,175 @@ pub enum AccountAddressType {
     P2WSH(u32),
 }
 
-/// a TREZOR compatible account
 pub struct Account {
-    birth: u64,
-    // seconds in unix epoch
-    sub: Vec<SubAccount>
+    address_type: AccountAddressType,
+    account_number: u32,
+    sub_account_number: u32,
+    context: Arc<SecpContext>,
+    master_public: ExtendedPubKey,
+    instantiated: Vec<InstantiatedKey>,
+    next: u32,
+    look_ahead: u32,
+    network: Network,
 }
 
 impl Account {
-    /// create a new account
-    pub fn new(context: Arc<SecpContext>, key: ExtendedPrivKey, address_type: AccountAddressType, birth: u64, used: Vec<u32>, look_ahead: u32, network: Network) -> Result<Account, WalletError> {
-        let mut sub = Vec::new();
-        for (i, u) in used.iter().enumerate() {
-            let mut s = SubAccount {
-                context: context.clone(),
-                address_type,
-                key: context.private_child(&key, ChildNumber::Normal { index: i as u32 })?,
-                instantiated: Vec::new(),
-                next: 0,
-                look_ahead,
-                network,
-            };
-            s.look_ahead(0)?;
-            for _ in 0..*u {
-                s.next_key()?;
-            }
-            sub.push(s);
-        }
-
-        Ok(Account { birth, sub })
+    pub fn new (unlocker: &mut Unlocker, address_type: AccountAddressType, account_number: u32, sub_account_number: u32, look_ahead: u32) -> Result<Account, WalletError> {
+        let context = Arc::new(SecpContext::new());
+        let master_private = unlocker.sub_account_key(address_type, account_number, sub_account_number)?;
+        let pubic_key = context.extended_public_from_private(&master_private);
+        let mut sub = Account {
+            address_type, account_number, sub_account_number, context,
+            master_public: pubic_key, instantiated: Vec::new(), next: 0, look_ahead, network: pubic_key.network
+        };
+        sub.look_ahead(0)?;
+        Ok(sub)
     }
 
-    pub fn birth(&self) -> u64 {
-        self.birth
+    /// look ahead from last seen
+    pub fn look_ahead(&mut self, seen: u32) -> Result<Vec<(u32, Script)>, WalletError> {
+        use std::cmp::max;
+
+        let have = self.instantiated.len() as u32;
+        let need = max(seen + self.look_ahead, have) - have;
+        let mut new = Vec::new();
+        for i in 0..need {
+            new.push((have + i, self.next_key()?.script_pubkey.clone()));
+        }
+        Ok(new)
+    }
+
+    /// create a new key
+    pub fn next_key(&mut self) -> Result<&InstantiatedKey, WalletError> {
+        let instantiated = InstantiatedKey::new_from_extended_key(self.address_type, self.network,
+                                                                  self.instantiated.len() as u32,
+                                                                  &self.master_public, self.context.clone())?;
+        let len = self.instantiated.len();
+        self.instantiated.push(instantiated);
+        Ok(&self.instantiated[len])
+    }
+
+    /// get a previously instantiated key
+    pub fn get_key(&self, kix: u32) -> Option<&InstantiatedKey> {
+        self.instantiated.get(kix as usize)
+    }
+
+    pub fn add_script_key(&mut self, pk: PublicKey, script_code: Script, tweak: Option<&[u8]>) -> Result<u32, WalletError> {
+        match self.address_type {
+            AccountAddressType::P2WSH(_) => {}
+            _ => return Err(WalletError::Unsupported("add_script_key can only be used for P2WSH accounts"))
+        }
+        let index = self.instantiated.len() as u32;
+        let instantiated = InstantiatedKey::new(self.address_type, self.network, pk,
+                                                tweak, index, Some(script_code), self.context.clone())?;
+        self.instantiated.push(instantiated);
+        Ok((self.instantiated.len() - 1) as u32)
+    }
+
+    pub fn used(&self) -> usize {
+        self.next as usize
     }
 
     // get all pubkey scripts of this account
-    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, u32, Script)> + 'a {
-        self.sub.iter().enumerate().flat_map(|(i, s)| s.get_scripts().map(move |(kix, script)| (i as u32, kix, script)))
+    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, Script, Option<Vec<u8>>)> + 'a {
+        self.instantiated.iter().enumerate().map(|(kix, i)| (kix as u32, i.script_pubkey.clone(), i.tweak.clone()))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=&SubAccount> {
-        self.sub.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut SubAccount> {
-        self.sub.iter_mut()
-    }
-
-    pub fn get(&self, s: u32) -> Option<&SubAccount> {
-        self.sub.get(s as usize)
-    }
-
-    pub fn get_mut (&mut self, s: u32) -> Option<&mut SubAccount> {
-        self.sub.get_mut(s as usize)
+    /// sign a transaction with keys in this account works for types except P2WSH
+    pub fn sign<R>(&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R, unlocker: &mut Unlocker) -> Result<usize, WalletError>
+        where R: Fn(&OutPoint) -> Option<TxOut> {
+        let mut signed = 0;
+        let txclone = transaction.clone();
+        let mut bip143hasher: Option<bip143::SighashComponents> = None;
+        for (ix, input) in transaction.input.iter_mut().enumerate() {
+            if let Some(spend) = resolver(&input.previous_output) {
+                if let Some(instantiated) =
+                self.instantiated.iter().find(|i| i.script_pubkey == spend.script_pubkey) {
+                    let pk = unlocker.unlock(self.address_type, self.account_number, self.sub_account_number, instantiated.index, instantiated.tweak.clone())?;
+                    match self.address_type {
+                        AccountAddressType::P2PKH => {
+                            let sighash = txclone.signature_hash(ix, &instantiated.address.script_pubkey(), hash_type.as_u32());
+                            let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
+                            signature.push(hash_type.as_u32() as u8);
+                            input.script_sig = Builder::new()
+                                .push_slice(signature.as_slice())
+                                .push_slice(instantiated.public.to_bytes().as_slice()).into_script();
+                            signed += 1;
+                        }
+                        AccountAddressType::P2WPKH => {
+                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
+                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
+                            }
+                            input.script_sig = Script::new();
+                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
+                            let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
+                            bip143hasher = Some(hasher);
+                            let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
+                            signature.push(hash_type.as_u32() as u8);
+                            input.witness.push(signature);
+                            input.witness.push(instantiated.public.to_bytes());
+                            signed += 1;
+                        }
+                        AccountAddressType::P2SHWPKH => {
+                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
+                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
+                            }
+                            input.script_sig = Builder::new().push_slice(&Builder::new()
+                                .push_int(0)
+                                .push_slice(&hash160::Hash::hash(instantiated.public.to_bytes().as_slice())[..])
+                                .into_script()[..]).into_script();
+                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
+                            let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
+                            bip143hasher = Some(hasher);
+                            let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
+                            signature.push(hash_type.as_u32() as u8);
+                            input.witness.push(signature);
+                            input.witness.push(instantiated.public.to_bytes());
+                            signed += 1;
+                        }
+                        AccountAddressType::P2WSH(_) => {
+                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
+                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
+                            }
+                            input.script_sig = Script::new();
+                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
+                            let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
+                            bip143hasher = Some(hasher);
+                            let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
+                            signature.push(hash_type.as_u32() as u8);
+                            input.witness.push(signature);
+                            input.witness.push(instantiated.script_code.to_bytes());
+                            signed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(signed)
     }
 }
 
 /// instantiated key of an account
 #[derive(Clone)]
-pub struct Instantiated {
-    pub pk: PrivateKey,
+pub struct InstantiatedKey {
+    pub index: u32,
     pub public: PublicKey,
     pub script_code: Script,
     pub address: Address,
     pub script_pubkey: Script,
+    pub tweak: Option<Vec<u8>>
 }
 
-impl Instantiated {
-    pub fn new_from_extended_key(address_type: AccountAddressType, network: Network, kix: u32, ek: &ExtendedPrivKey, context: Arc<SecpContext>) -> Result<Instantiated, WalletError> {
-        return Self::new(address_type, network, context.private_child(&ek, ChildNumber::Normal { index: kix })?.private_key, None, None, context);
+
+impl InstantiatedKey {
+    pub fn new_from_extended_key(address_type: AccountAddressType, network: Network, index: u32, ek: &ExtendedPubKey, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError> {
+        return Self::new(address_type, network, context.public_child(&ek, ChildNumber::Normal {index})?.public_key, None, index, None, context);
     }
 
-    pub fn new(address_type: AccountAddressType, network: Network, mut pk: PrivateKey, tweak: Option<&[u8]>, script_code: Option<Script>, context: Arc<SecpContext>) -> Result<Instantiated, WalletError> {
+    pub fn new(address_type: AccountAddressType, network: Network, mut public: PublicKey, tweak: Option<&[u8]>, index: u32, script_code: Option<Script>, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError> {
         if let Some(tweak) = tweak {
-            pk = pk.clone();
-            pk.key.add_assign(tweak)?;
+            context.tweak_exp_add(&mut public, tweak)?;
         }
-        let public = context.public_from_private(&pk);
         let (script_code, address) = match address_type {
             AccountAddressType::P2PKH => (Script::new(), Address::p2pkh(&public, network)),
             AccountAddressType::P2SHWPKH => (
@@ -160,179 +391,22 @@ impl Instantiated {
             }
         };
         let script_pubkey = address.script_pubkey();
-        Ok(Instantiated {
-            pk,
-            public,
-            script_code,
-            address,
-            script_pubkey,
-        })
+        Ok(InstantiatedKey { index, public, script_code, address, script_pubkey, tweak: tweak.map(|t|t.to_vec()) })
     }
 }
 
+/// seed of the master key
+pub struct Seed(pub Vec<u8>);
 
-pub struct SubAccount {
-    address_type: AccountAddressType,
-    context: Arc<SecpContext>,
-    key: ExtendedPrivKey,
-    instantiated: Vec<Instantiated>,
-    next: u32,
-    look_ahead: u32,
-    network: Network,
-}
-
-impl SubAccount {
-    /// look ahead one more key
-    pub fn look_ahead(&mut self, seen: u32) -> Result<Vec<(u32, Script)>, WalletError> {
-        use std::cmp::max;
-
-        let have = self.instantiated.len() as u32;
-        let need = max(seen + self.look_ahead, have) - have;
-        let mut new = Vec::new();
-        for i in 0..need {
-            new.push((have + i, self.instantiate_next()?.script_pubkey.clone()));
-        }
-        Ok(new)
-    }
-
-    fn instantiate_next(&mut self) -> Result<&Instantiated, WalletError> {
-        // keep looking ahead
-        let instantiated = Instantiated::new_from_extended_key(self.address_type, self.network,
-                                                               self.instantiated.len() as u32, &self.key,
-                                                               self.context.clone())?;
-        let len = self.instantiated.len();
-        self.instantiated.push(instantiated);
-        Ok(&self.instantiated[len])
-    }
-
-    /// create a new key
-    pub fn next_key(&mut self) -> Result<(u32, &Instantiated), WalletError> {
-        // keep looking ahead
-        self.instantiate_next()?;
-
-        // get next key
-        let kix = self.next;
-        let ref instantiated = self.instantiated[kix as usize];
-        self.next += 1;
-
-
-        Ok((kix, instantiated))
-    }
-
-    /// get last instantiated key
-    pub fn last_key (&self) -> (u32, &Instantiated) {
-        let kix = self.next;
-        let ref instantiated = self.instantiated[kix as usize];
-        (kix, instantiated)
-    }
-
-    pub fn add_script_key(&mut self, pk: PrivateKey, script_code: Script) -> Result<u32, WalletError> {
-        match self.address_type {
-            AccountAddressType::P2WSH(_) => {}
-            _ => return Err(WalletError::Unsupported("add_script_key can only be used for P2WSH accounts"))
-        }
-        let instantiated = Instantiated::new(self.address_type, self.network, pk,
-                                             None, Some(script_code),
-                                             self.context.clone())?;
-        self.instantiated.push(instantiated);
-        Ok((self.instantiated.len() - 1) as u32)
-    }
-
-    pub fn used(&self) -> usize {
-        self.next as usize
-    }
-
-    // get all pubkey scripts of this account
-    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, Script)> + 'a {
-        self.instantiated.iter().enumerate().map(|(kix, i)| (kix as u32, i.script_pubkey.clone()))
-    }
-
-    /// get a previously created private key for an index with optional additive tweak
-    pub fn get_key(&self, ix: u32) -> Option<PrivateKey> {
-        if let Some(i) = self.instantiated.get(ix as usize) {
-            return Some(i.pk.clone());
-        }
-        None
-    }
-
-    /// get the address for an index, key for this index must have been created earlier
-    pub fn get_address(&self, ix: u32) -> Option<Address> {
-        if let Some(i) = self.instantiated.get(ix as usize) {
-            return Some(i.address.clone());
-        }
-        None
-    }
-
-    /// sign a transaction with keys in this account works for types except P2WSH
-    pub fn sign<R>(&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R) -> Result<usize, WalletError>
-        where R: Fn(&OutPoint) -> Option<TxOut> {
-        let mut signed = 0;
-        let txclone = transaction.clone();
-        let mut bip143hasher: Option<bip143::SighashComponents> = None;
-        for (ix, input) in transaction.input.iter_mut().enumerate() {
-            if let Some(spend) = resolver(&input.previous_output) {
-                if let Some(instantiated) =
-                self.instantiated.iter().find(|i| i.script_pubkey == spend.script_pubkey) {
-                    match self.address_type {
-                        AccountAddressType::P2PKH => {
-                            let sighash = txclone.signature_hash(ix, &instantiated.address.script_pubkey(), hash_type.as_u32());
-                            let mut signature = self.context.sign(&sighash[..], &instantiated.pk)?.serialize_der();
-                            signature.push(hash_type.as_u32() as u8);
-                            input.script_sig = Builder::new()
-                                .push_slice(signature.as_slice())
-                                .push_slice(instantiated.public.to_bytes().as_slice()).into_script();
-                            signed += 1;
-                        }
-                        AccountAddressType::P2WPKH => {
-                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
-                            }
-                            input.script_sig = Script::new();
-                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
-                            bip143hasher = Some(hasher);
-                            let mut signature = self.context.sign(&sighash[..], &instantiated.pk)?.serialize_der();
-                            signature.push(hash_type.as_u32() as u8);
-                            input.witness.push(signature);
-                            input.witness.push(instantiated.public.to_bytes());
-                            signed += 1;
-                        }
-                        AccountAddressType::P2SHWPKH => {
-                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
-                            }
-                            input.script_sig = Builder::new().push_slice(&Builder::new()
-                                .push_int(0)
-                                .push_slice(&hash160::Hash::hash(instantiated.public.to_bytes().as_slice())[..])
-                                .into_script()[..]).into_script();
-                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
-                            bip143hasher = Some(hasher);
-                            let mut signature = self.context.sign(&sighash[..], &instantiated.pk)?.serialize_der();
-                            signature.push(hash_type.as_u32() as u8);
-                            input.witness.push(signature);
-                            input.witness.push(instantiated.public.to_bytes());
-                            signed += 1;
-                        }
-                        AccountAddressType::P2WSH(_) => {
-                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
-                            }
-                            input.script_sig = Script::new();
-                            let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
-                            bip143hasher = Some(hasher);
-                            let mut signature = self.context.sign(&sighash[..], &instantiated.pk)?.serialize_der();
-                            signature.push(hash_type.as_u32() as u8);
-                            input.witness.push(signature);
-                            input.witness.push(instantiated.script_code.to_bytes());
-                            signed += 1;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(signed)
+impl Seed {
+    /// create a seed from mnemonic
+    /// with optional passphrase for plausible deniability see BIP39
+    pub fn new(mnemonic: &Mnemonic, pd_passphrase: Option<&str>) -> Seed {
+        let mut mac = Hmac::new(Sha512::new(), mnemonic.to_string().as_bytes());
+        let mut output = [0u8; 64];
+        let passphrase = "mnemonic".to_owned() + pd_passphrase.unwrap_or("");
+        pbkdf2(&mut mac, passphrase.as_bytes(), 2048, &mut output);
+        Seed(output.to_vec())
     }
 }
 
@@ -345,17 +419,27 @@ mod test {
     use bitcoin::blockdata::transaction::{OutPoint, TxIn, TxOut};
     use bitcoin_hashes::sha256d;
 
-    use context::MasterKeyEntropy;
-
     use super::*;
-    use masteraccount::MasterAccount;
+
+    use std::fs::File;
+    use std::path::PathBuf;
+    use std::io::Read;
+    use bitcoin::network::constants::Network;
+    use bitcoin::util::bip32::ChildNumber;
+
+    use serde_json::{Value};
+    use hex::decode;
+
+    const PASSPHRASE: &str = "correct horse battery staple";
 
     #[test]
     fn test_pkh() {
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2PKH, vec!(0), 10, None).unwrap();
-        let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
-        let (_, i) = account.next_key().unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let account = Account::new(&mut unlocker, AccountAddressType::P2PKH, 0, 0, 10).unwrap();
+        master.add_account(account);
+        let account = master.get_mut((0,0)).unwrap();
+        let i = account.next_key().unwrap();
         let source = i.address.clone();
         let target = i.address.clone();
         let input_transaction = Transaction {
@@ -400,17 +484,19 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(input_transaction.txid(), input_transaction.clone());
 
-        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
+        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone()), &mut unlocker).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
 
     #[test]
     fn test_wpkh() {
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2WPKH, vec!(0), 10, None).unwrap();
-        let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
-        let (_, i) = account.next_key().unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let account = Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap();
+        master.add_account(account);
+        let account = master.get_mut((0,0)).unwrap();
+        let i = account.next_key().unwrap();
         let source = i.address.clone();
         let target = i.address.clone();
 
@@ -456,17 +542,19 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(txid, input_transaction.clone());
 
-        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
+        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone()), &mut unlocker).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
 
     #[test]
     fn test_shwpkh() {
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2SHWPKH, vec!(0), 10, None).unwrap();
-        let account = master.get_mut(0).unwrap().get_mut(0).unwrap();
-        let (_, i) = account.next_key().unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
+        master.add_account(account);
+        let account = master.get_mut((0,0)).unwrap();
+        let i = account.next_key().unwrap();
         let source = i.address.clone();
         let target = i.address.clone();
 
@@ -513,39 +601,44 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(txid, input_transaction.clone());
 
-        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
+        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone()), &mut unlocker).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
 
     #[test]
     fn test_wsh() {
+
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
+        master.add_account(account);
+        let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 1, 0, 0).unwrap();
+        master.add_account(account);
+
         let ctx = Arc::new(SecpContext::new());
 
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, "", "TREZOR").unwrap();
-        master.add_account(AccountAddressType::P2SHWPKH, vec!(0), 10, None).unwrap();
-        master.add_account(AccountAddressType::P2WSH(4711), vec!(0), 0, None).unwrap();
-
-        let pk;
+        let mut pk;
         {
-            let base_account = master.get_mut(0).unwrap().get_mut(0).unwrap();
-            let (_, i) = base_account.next_key().unwrap();
-            pk = i.pk;
+            let base_account = master.get_mut((0, 0)).unwrap();
+            pk = base_account.next_key().unwrap().public;
         }
-        let account = master.get_mut(1).unwrap().get_mut(0).unwrap();
+        ctx.tweak_exp_add(&mut pk, &[0x01; 32]).unwrap();
+
+        {
+            let account = master.get_mut((1, 0)).unwrap();
+            let script_code = Builder::new()
+                .push_slice(pk.to_bytes().as_slice())
+                .push_opcode(all::OP_CHECKSIG)
+                .into_script();
+            account.add_script_key(pk, script_code, Some(&[0x01; 32])).unwrap();
+        }
 
 
-        // optional: add some tweak
-        let pk = ctx.tweak_add(&pk, &[0x01; 32]).unwrap();
-
-        let scrip_code = Builder::new()
-            .push_slice(ctx.public_from_private(&pk).to_bytes().as_slice())
-            .push_opcode(all::OP_CHECKSIG)
-            .into_script();
-
-        let ix = account.add_script_key(pk, scrip_code).unwrap();
-        let source = account.get_address(ix).unwrap();
-        let target = account.get_address(ix).unwrap();
+        let base_account = master.get((0, 0)).unwrap();
+        let account = master.get((0,0)).unwrap();
+        let source = base_account.get_key(0).unwrap().address.clone();
+        let target = account.get_key(0).unwrap().address.clone();
         let input_transaction = Transaction {
             input: vec![
                 TxIn {
@@ -590,8 +683,42 @@ mod test {
 
         assert_eq!(account.sign(
             &mut spending_transaction, SigHashType::All,
-            |_| Some(input_transaction.output[0].clone())).unwrap(), 1);
+            |_| Some(input_transaction.output[0].clone()), &mut unlocker).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
+    }
+
+    #[test]
+    fn bip32_tests () {
+        let context = super::SecpContext::new();
+
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("tests/BIP32.json");
+        let mut file = File::open(d).unwrap();
+        let mut data = String::new();
+        file.read_to_string(&mut data).unwrap();
+        let json: Value = serde_json::from_str(&data).unwrap();
+        let tests = json.as_array().unwrap();
+        for test in tests {
+            let seed = Seed(decode(test["seed"].as_str().unwrap()).unwrap());
+            let master_private = context.master_private_key(Network::Bitcoin, &seed).unwrap();
+            assert_eq!(test["private"].as_str().unwrap(), master_private.to_string());
+            assert_eq!(test["public"].as_str().unwrap(), context.extended_public_from_private(&master_private).to_string());
+            for d in test["derived"].as_array().unwrap() {
+                let mut key = master_private.clone();
+                for l in d ["locator"].as_array().unwrap() {
+                    let sequence = l ["sequence"].as_u64().unwrap();
+                    let private = l ["private"].as_bool().unwrap();
+                    let child = if private {
+                        ChildNumber::Hardened{index:sequence as u32}
+                    } else {
+                        ChildNumber::Normal{index:sequence as u32}
+                    };
+                    key = context.private_child(&key.clone(), child).unwrap();
+                }
+                assert_eq!(d ["private"].as_str().unwrap(), key.to_string());
+                assert_eq!(d ["public"].as_str().unwrap(), context.extended_public_from_private(&key).to_string());
+            }
+        }
     }
 }

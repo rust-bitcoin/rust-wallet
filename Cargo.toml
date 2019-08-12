@@ -15,7 +15,6 @@ bitcoin = {version="0.18", features=["bitcoinconsensus", "serde"]}
 bitcoin_hashes={version="0.3", features=["serde"]}
 secp256k1 = "0.12"
 rust-crypto = "0.2"
-rand = "0.7"
 serde = "1"
 serde_derive = "1"
 

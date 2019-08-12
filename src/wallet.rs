@@ -23,7 +23,7 @@ use bitcoin_hashes::sha256d;
 use bitcoin::{OutPoint, TxOut};
 use bitcoin::Block;
 use std::collections::HashMap;
-use masteraccount::MasterAccount;
+use account::MasterAccount;
 use error::WalletError;
 use proved::ProvedTransaction;
 use trunk::Trunk;
@@ -40,7 +40,7 @@ pub struct Wallet {
 impl Wallet {
     /// unwind the tip
     pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) -> Result<(), WalletError> {
-        if let Some(tip) = self.trunk.get_tip() {
+        if let Some(_) = self.trunk.get_tip() {
             if self.processed_height == self.trunk.len() + 1 {
                 // this means we might have lost control of coins at least temporarily
                 let lost_coins = self.proofs.values()
@@ -71,7 +71,7 @@ impl Wallet {
                 return Err(WalletError::Unsupported("not the block expected at this height"));
             }
             let mut scripts: HashMap<Script, (u32, u32, u32)> = self.master.get_scripts()
-                .map(|(a, sub, k, s)| (s, (a, sub, k))).collect();
+                .map(|(a, sub, k, s,_)| (s, (a, sub, k))).collect();
 
             let mut spends = Vec::new();
 
@@ -85,7 +85,7 @@ impl Wallet {
                     let mut lookahead = Vec::new();
                     if let Some((a, sub, seen)) = scripts.get(&output.script_pubkey) {
                         lookahead =
-                            self.master.get_mut(*a).unwrap().get_mut(*sub).unwrap().look_ahead(*seen).unwrap()
+                            self.master.get_mut((*a, *sub)).unwrap().look_ahead(*seen).unwrap()
                                 .iter().map(move |(kix, s)| (*a, *sub, *kix, s.clone())).collect();
                         self.owned.insert(OutPoint { txid: tx.txid(), vout: vout as u32 }, output.clone());
                         self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));

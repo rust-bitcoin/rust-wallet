@@ -34,6 +34,10 @@ pub enum WalletError {
     Unsupported(&'static str),
     /// mnemonic related error
     Mnemonic(&'static str),
+    /// wrong passphrase
+    Passphrase,
+    /// wrong network
+    Network,
     /// Network IO error
     IO(io::Error),
     /// key derivation error
@@ -47,6 +51,8 @@ pub enum WalletError {
 impl Error for WalletError {
     fn description(&self) -> &str {
         match *self {
+            WalletError::Passphrase => "wrong passphrase",
+            WalletError::Network => "wrong network",
             WalletError::Unsupported(ref s) => s,
             WalletError::Mnemonic(ref s) => s,
             WalletError::IO(ref err) => err.description(),
@@ -61,6 +67,8 @@ impl Error for WalletError {
 
     fn cause(&self) -> Option<&dyn Error> {
         match *self {
+            WalletError::Network => None,
+            WalletError::Passphrase => None,
             WalletError::Unsupported(_) => None,
             WalletError::Mnemonic(_) => None,
             WalletError::IO(ref err) => Some(err),
@@ -76,6 +84,8 @@ impl fmt::Display for WalletError {
         match *self {
             // Both underlying errors already impl `Display`, so we defer to
             // their implementations.
+            WalletError::Passphrase => write!(f, "wrong passphrase"),
+            WalletError::Network => write!(f, "wrong network"),
             WalletError::Unsupported(ref s) => write!(f, "Unsupported: {}", s),
             WalletError::Mnemonic(ref s) => write!(f, "Mnemonic: {}", s),
             WalletError::IO(ref err) => write!(f, "IO error: {}", err),

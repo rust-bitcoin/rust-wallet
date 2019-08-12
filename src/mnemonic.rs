@@ -106,7 +106,7 @@ mod test {
     use std::fs::File;
     use std::path::PathBuf;
     use std::io::Read;
-    use context::Seed;
+    use account::Seed;
     use bitcoin::network::constants::Network;
 
     use serde_json::{Value};
@@ -131,9 +131,9 @@ mod test {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_str().unwrap()).unwrap();
             let mnemonic = Mnemonic::from(values[1].as_str().unwrap()).unwrap();
-            let seed = Seed::new(&mnemonic, "TREZOR");
+            let seed = Seed::new(&mnemonic, Some("TREZOR"));
             assert_eq!(mnemonic.to_string(), Mnemonic::mnemonic(data.as_slice()).unwrap().to_string());
-            assert_eq!(seed.data(), decode(values[2].as_str().unwrap()).unwrap());
+            assert_eq!(seed.0, decode(values[2].as_str().unwrap()).unwrap());
 
             if values.len() == 4 {
                 let pk = values[3].as_str().unwrap();
