@@ -110,6 +110,15 @@ impl MasterAccount {
     pub fn add_account(&mut self, account: Account) {
         self.accounts.insert((account.account_number, account.sub_account_number), account);
     }
+
+    pub fn sign<R>(&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: &R, unlocker: &mut Unlocker) -> Result<usize, WalletError>
+        where R: Fn(&OutPoint) -> Option<TxOut> {
+        let mut n_signatures = 0;
+        for (_, a) in self.accounts.iter() {
+            n_signatures += a.sign(transaction, hash_type, resolver, unlocker)?;
+        }
+        Ok(n_signatures)
+    }
 }
 
 /// calculator of private keys
@@ -484,7 +493,8 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(input_transaction.txid(), input_transaction.clone());
 
-        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone()), &mut unlocker).unwrap(), 1);
+        assert_eq!(master.sign(&mut spending_transaction, SigHashType::All,
+                               &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
@@ -542,7 +552,8 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(txid, input_transaction.clone());
 
-        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone()), &mut unlocker).unwrap(), 1);
+        assert_eq!(master.sign(&mut spending_transaction, SigHashType::All,
+                               &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
@@ -601,7 +612,8 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(txid, input_transaction.clone());
 
-        assert_eq!(account.sign(&mut spending_transaction, SigHashType::All, |_| Some(input_transaction.output[0].clone()), &mut unlocker).unwrap(), 1);
+        assert_eq!(master.sign(&mut spending_transaction, SigHashType::All,
+                               &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
@@ -681,9 +693,9 @@ mod test {
         let mut spent = HashMap::new();
         spent.insert(input_transaction.txid(), input_transaction.clone());
 
-        assert_eq!(account.sign(
+        assert_eq!(master.sign(
             &mut spending_transaction, SigHashType::All,
-            |_| Some(input_transaction.output[0].clone()), &mut unlocker).unwrap(), 1);
+            &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
 
         spending_transaction.verify(&spent).unwrap();
     }
