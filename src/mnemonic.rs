@@ -1,5 +1,5 @@
 //
-// Copyright 2018 Tamas Blummer
+// Copyright 2018-2019 Tamas Blummer
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,6 +46,10 @@ impl Mnemonic {
         decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
                           &mut buffer::RefWriteBuffer::new(decrypted.as_mut_slice()), true)?;
         Mnemonic::mnemonic(decrypted.as_slice())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item=&str> {
+        self.0.iter().map(|s| *s)
     }
 
     pub fn from (s : &str) -> Result<Mnemonic, WalletError> {
