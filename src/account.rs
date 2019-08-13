@@ -60,11 +60,11 @@ impl MasterAccount {
     /// and the optional pd_passphrase (pd for plausible deniability)
     pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, WalletError> {
         let context = SecpContext::new();
-
-        let mut encrypted = vec!(0u8; entropy as usize);
+        let mut random = vec!(0u8; entropy as usize);
         let mut rng = thread_rng();
-        rng.fill_bytes(encrypted.as_mut_slice());
-        let mnemonic = Mnemonic::new(&encrypted, passphrase)?;
+        rng.fill_bytes(random.as_mut_slice());
+        let mnemonic = Mnemonic::new(&random)?;
+        let encrypted = mnemonic.encrypt(passphrase)?;
         let seed = Seed::new(&mnemonic, pd_passphrase);
         let master_key = context.master_private_key(network, &seed)?;
         let public_master_key = context.extended_public_from_private(&master_key);
@@ -78,9 +78,19 @@ impl MasterAccount {
         MasterAccount { master_public: public_master_key, encrypted, accounts: HashMap::new(), birth }
     }
 
+    /// Restore from mnemonic
+    pub fn from_mnemonic(mnemonic: &Mnemonic, birth: u64, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, WalletError> {
+        let context = SecpContext::new();
+        let encrypted = mnemonic.encrypt(passphrase)?;
+        let seed = Seed::new(&mnemonic, pd_passphrase);
+        let master_key = context.master_private_key(network, &seed)?;
+        let public_master_key = context.extended_public_from_private(&master_key);
+        Ok(MasterAccount { master_public: public_master_key, encrypted, accounts: HashMap::new(), birth })
+    }
+
     /// get the mnemonic (human readable) representation of the master key
     pub fn mnemonic (&self, passphrase: &str) -> Result<Mnemonic, WalletError> {
-        Ok(Mnemonic::new(&self.encrypted, passphrase)?)
+        Ok(Mnemonic::decrypt(&self.encrypted, passphrase)?)
     }
 
     pub fn master_public (&self) ->&ExtendedPubKey {
@@ -128,14 +138,15 @@ pub struct Unlocker {
     context: SecpContext,
     cached: HashMap<AccountAddressType,
         (ExtendedPrivKey, HashMap<u32,
-            (ExtendedPrivKey, HashMap<u32,ExtendedPrivKey>)>)>,
+            (ExtendedPrivKey, HashMap<u32,
+                (ExtendedPrivKey, HashMap<u32, ExtendedPrivKey>)>)>)>,
 }
 
 impl Unlocker {
     /// decrypt encrypted seed of a master account
     /// check result if master_public is provided
     pub fn new (encrypted: &[u8], passphrase: &str, pd_passphrase: Option<&str>, network: Network, master_public: Option<&ExtendedPubKey>) -> Result<Unlocker, WalletError>{
-        let mnemonic = Mnemonic::new (encrypted, passphrase)?;
+        let mnemonic = Mnemonic::decrypt (encrypted, passphrase)?;
         let context = SecpContext::new();
         let master_private = context.master_private_key(network, &Seed::new(&mnemonic, pd_passphrase))?;
         if let Some(master_public) = master_public {
@@ -163,7 +174,7 @@ impl Unlocker {
                     AccountAddressType::P2WSH(index) => self.context.private_child(&self.master_private, ChildNumber::Hardened { index })?
                 }
                 , HashMap::new()));
-        let by_account = by_type.1.entry(account).or_insert(
+        let by_coin_type = by_type.1.entry(account).or_insert(
             (
                 match self.network {
                     Network::Bitcoin => self.context.private_child(&by_type.0, ChildNumber::Hardened { index: 0 })?,
@@ -171,8 +182,9 @@ impl Unlocker {
                     Network::Regtest => self.context.private_child(&by_type.0, ChildNumber::Hardened { index: 1 })?
                 }
                 ,HashMap::new()));
-        let key = by_account.1.entry(sub_account).or_insert(
-                self.context.private_child(&by_account.0, ChildNumber::Normal { index: sub_account })?);
+        let by_account = by_coin_type.1.entry(account).or_insert(
+            (self.context.private_child(&by_coin_type.0, ChildNumber::Hardened { index: account })?, HashMap::new()));
+        let key= self.context.private_child(&by_account.0, ChildNumber::Normal { index: sub_account })?;
         Ok(key.clone())
     }
 
@@ -699,6 +711,7 @@ mod test {
 
         spending_transaction.verify(&spent).unwrap();
     }
+
 
     #[test]
     fn bip32_tests () {
