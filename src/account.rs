@@ -78,6 +78,11 @@ impl MasterAccount {
         MasterAccount { master_public: public_master_key, encrypted, accounts: HashMap::new(), birth }
     }
 
+    /// A watch only master. You will not be able to sign with this.
+    pub fn watch_only(public_master_key: ExtendedPubKey, birth: u64) -> MasterAccount {
+        MasterAccount { master_public: public_master_key, encrypted: Vec::new(), accounts: HashMap::new(), birth }
+    }
+
     /// Restore from mnemonic
     pub fn from_mnemonic(mnemonic: &Mnemonic, birth: u64, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, WalletError> {
         let context = SecpContext::new();
