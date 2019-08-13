@@ -165,7 +165,7 @@ impl Unlocker {
     }
 
     pub fn sub_account_key(&mut self, address_type: AccountAddressType, account: u32, sub_account: u32) -> Result<ExtendedPrivKey, WalletError> {
-        let by_type = self.cached.entry(address_type).or_insert(
+        let by_purpose = self.cached.entry(address_type).or_insert(
             (
                 match address_type {
                     AccountAddressType::P2PKH => self.context.private_child(&self.master_private, ChildNumber::Hardened { index: 44 })?,
@@ -174,18 +174,18 @@ impl Unlocker {
                     AccountAddressType::P2WSH(index) => self.context.private_child(&self.master_private, ChildNumber::Hardened { index })?
                 }
                 , HashMap::new()));
-        let by_coin_type = by_type.1.entry(account).or_insert(
+        let coin_type = match self.network {
+            Network::Bitcoin => 0,
+            Network::Testnet => 1,
+            Network::Regtest => 1
+        };
+        let by_coin_type = by_purpose.1.entry(coin_type).or_insert(
             (
-                match self.network {
-                    Network::Bitcoin => self.context.private_child(&by_type.0, ChildNumber::Hardened { index: 0 })?,
-                    Network::Testnet => self.context.private_child(&by_type.0, ChildNumber::Hardened { index: 1 })?,
-                    Network::Regtest => self.context.private_child(&by_type.0, ChildNumber::Hardened { index: 1 })?
-                }
+                self.context.private_child(&by_purpose.0, ChildNumber::Hardened { index: coin_type })?
                 ,HashMap::new()));
         let by_account = by_coin_type.1.entry(account).or_insert(
             (self.context.private_child(&by_coin_type.0, ChildNumber::Hardened { index: account })?, HashMap::new()));
-        let key= self.context.private_child(&by_account.0, ChildNumber::Normal { index: sub_account })?;
-        Ok(key.clone())
+        Ok(self.context.private_child(&by_account.0, ChildNumber::Normal { index: sub_account })?)
     }
 
     pub fn unlock (&mut self, address_type: AccountAddressType, account: u32, sub_account: u32, index: u32, tweak: Option<Vec<u8>>) -> Result<PrivateKey, WalletError> {
@@ -712,7 +712,45 @@ mod test {
         spending_transaction.verify(&spent).unwrap();
     }
 
-
+    #[test]
+    fn crosscheck_with_hardware_wallet () {
+        let words = "announce damage viable ticket engage curious yellow ten clock finish burden orient faculty rigid smile host offer affair suffer slogan mercy another switch park";
+        let mnemonic = Mnemonic::from_str(words).unwrap();
+        let master = MasterAccount::from_mnemonic(&mnemonic, 0, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new(
+            master.encrypted(), PASSPHRASE, None, Network::Bitcoin, Some(master.master_public())
+        ).unwrap();
+        let mut account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
+        // this should be address of m/49'/0'/0'/0/0
+        assert_eq!(account.next_key().unwrap().address.to_string(), "3L8V8m");
+    }
+/*
+1 announce
+2 damage
+3 viable
+4 ticket
+5 engage
+6 curious
+7 yellow
+8 ten
+9 clock
+10 finish
+11 burden
+12 orient
+13 faculty
+14 rigid
+15 smile
+16 host
+17 offer
+18 affair
+19 suffer
+20 slogan
+21 mercy
+22 another
+23 switch
+24 park
+35iXsSwnXgWf8ervTyJjoKBhq3PtRi6nEH
+*/
     #[test]
     fn bip32_tests () {
         let context = super::SecpContext::new();
