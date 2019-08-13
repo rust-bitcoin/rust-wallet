@@ -263,7 +263,7 @@ impl Account {
 
     /// create a new key
     pub fn next_key(&mut self) -> Result<&InstantiatedKey, WalletError> {
-        self.look_ahead (self.next)?;
+        self.instantiate_more()?;
         let key = &self.instantiated[self.next as usize];
         self.next += 1;
         Ok(&key)

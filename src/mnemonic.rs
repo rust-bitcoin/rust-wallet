@@ -24,7 +24,6 @@ use crypto::digest::Digest;
 use crypto::aes;
 use crypto::blockmodes;
 use crypto::buffer;
-use std::fs::read_to_string;
 use crypto::buffer::{BufferResult, WriteBuffer, ReadBuffer};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
