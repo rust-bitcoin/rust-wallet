@@ -247,19 +247,26 @@ impl Account {
         let need = max(seen + self.look_ahead, have) - have;
         let mut new = Vec::new();
         for i in 0..need {
-            new.push((have + i, self.next_key()?.script_pubkey.clone()));
+            new.push((have + i, self.instantiate_more()?.script_pubkey.clone()));
         }
         Ok(new)
     }
 
-    /// create a new key
-    pub fn next_key(&mut self) -> Result<&InstantiatedKey, WalletError> {
+    fn instantiate_more (&mut self) -> Result<&InstantiatedKey, WalletError> {
         let instantiated = InstantiatedKey::new_from_extended_key(self.address_type, self.network,
                                                                   self.instantiated.len() as u32,
                                                                   &self.master_public, self.context.clone())?;
         let len = self.instantiated.len();
         self.instantiated.push(instantiated);
         Ok(&self.instantiated[len])
+    }
+
+    /// create a new key
+    pub fn next_key(&mut self) -> Result<&InstantiatedKey, WalletError> {
+        self.look_ahead (self.next)?;
+        let key = &self.instantiated[self.next as usize];
+        self.next += 1;
+        Ok(&key)
     }
 
     /// get a previously instantiated key
