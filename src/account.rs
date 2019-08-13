@@ -56,7 +56,7 @@ pub struct MasterAccount {
 
 impl MasterAccount {
     /// create a new random master account
-    /// the randomly generated seed leads to the master private key if decrypted with passphrase
+    /// the information that leads to private key is stored encrypted with passphrase
     /// and the optional pd_passphrase (pd for plausible deniability)
     pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, WalletError> {
         let context = SecpContext::new();
