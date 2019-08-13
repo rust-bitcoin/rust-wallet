@@ -720,37 +720,14 @@ mod test {
         let mut unlocker = Unlocker::new(
             master.encrypted(), PASSPHRASE, None, Network::Bitcoin, Some(master.master_public())
         ).unwrap();
-        let mut account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
+        let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
         // this should be address of m/49'/0'/0'/0/0
-        assert_eq!(account.next_key().unwrap().address.to_string(), "3L8V8m");
+        assert_eq!(account.get_key(0).unwrap().address.to_string(), "3L8V8mDQVUySGwCqiB2x8fdRRMGWyyF4YP");
+        let account = Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap();
+        // this should be address of m/84'/0'/0'/0/0
+        assert_eq!(account.get_key(0).unwrap().address.to_string(), "bc1qlz2h9scgalmqj43d36f58dcxrrl7udu999gcp2");
     }
-/*
-1 announce
-2 damage
-3 viable
-4 ticket
-5 engage
-6 curious
-7 yellow
-8 ten
-9 clock
-10 finish
-11 burden
-12 orient
-13 faculty
-14 rigid
-15 smile
-16 host
-17 offer
-18 affair
-19 suffer
-20 slogan
-21 mercy
-22 another
-23 switch
-24 park
-35iXsSwnXgWf8ervTyJjoKBhq3PtRi6nEH
-*/
+
     #[test]
     fn bip32_tests () {
         let context = super::SecpContext::new();
