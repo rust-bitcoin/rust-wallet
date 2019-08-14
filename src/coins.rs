@@ -46,8 +46,18 @@ impl Coins {
         Coins { owned: HashMap::new(), proofs: HashMap::new() }
     }
 
-    pub fn prove (&self, txid: &sha256d::Hash) -> Option<&ProvedTransaction> {
-        self.proofs.get(txid)
+    /// this should only be used to restore previously computed state
+    pub fn add_from_storage(&mut self, point: OutPoint, coin: Coin, block_hash: sha256d::Hash, proof: ProvedTransaction) {
+        self.owned.insert(point, coin);
+        self.proofs.insert(block_hash, proof);
+    }
+
+    pub fn owned(&self) -> &HashMap<OutPoint, Coin> {
+        &self.owned
+    }
+
+    pub fn proofs(&self) -> &HashMap<sha256d::Hash, ProvedTransaction> {
+        &self.proofs
     }
 
     /// unwind the tip of the trunk
