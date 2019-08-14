@@ -118,6 +118,10 @@ impl MasterAccount {
         self.accounts.get_mut(&account)
     }
 
+    pub fn accounts(&self) -> &HashMap<(u32, u32), Account> {
+        &self.accounts
+    }
+
     pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(Script, KeyDerivation)> + 'a {
         self.accounts.iter().flat_map(
             |((an, sub), a)|
