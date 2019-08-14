@@ -206,11 +206,11 @@ impl Unlocker {
 /// Address type an account is using
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AccountAddressType {
-    /// legacy pay to public key hash
+    /// legacy pay to public key hash (BIP44)
     P2PKH,
-    /// transitional segwit pay to public key hash in legacy format
+    /// transitional segwit pay to public key hash in legacy format (BIP49)
     P2SHWPKH,
-    /// native segwit pay to public key hash in bech format
+    /// native segwit pay to public key hash in bech format (BIP84)
     P2WPKH,
     /// native segwit pay to script
     /// do not use 44, 49 or 84 for this parameter, to avoid confusion with above types
@@ -240,12 +240,44 @@ impl Account {
             address_type, account_number, sub_account_number, context,
             master_public: pubic_key, instantiated: Vec::new(), next: 0, look_ahead, network: pubic_key.network
         };
-        sub.look_ahead(0)?;
+        sub.do_look_ahead(0)?;
         Ok(sub)
     }
 
+    pub fn address_type (&self) -> AccountAddressType {
+        self.address_type
+    }
+
+    pub fn account_number(&self) -> u32 {
+        self.account_number
+    }
+
+    pub fn sub_account_number(&self) -> u32 {
+        self.sub_account_number
+    }
+
+    pub fn master_public(&self) -> &ExtendedPubKey {
+        &self.master_public
+    }
+
+    pub fn next(&self) -> u32 {
+        self.next
+    }
+
+    pub fn look_ahead(&self) -> u32 {
+        self.look_ahead
+    }
+
+    pub fn network(&self) -> Network {
+        self.network
+    }
+
+    pub fn instantiated(&self) -> &Vec<InstantiatedKey> {
+        &self.instantiated
+    }
+
     /// look ahead from last seen
-    pub fn look_ahead(&mut self, seen: u32) -> Result<Vec<(u32, Script)>, WalletError> {
+    pub fn do_look_ahead(&mut self, seen: u32) -> Result<Vec<(u32, Script)>, WalletError> {
         use std::cmp::max;
 
         let have = self.instantiated.len() as u32;
@@ -375,7 +407,7 @@ impl Account {
 }
 
 /// instantiated key of an account
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct InstantiatedKey {
     pub index: u32,
     pub public: PublicKey,

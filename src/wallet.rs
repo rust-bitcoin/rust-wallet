@@ -73,7 +73,7 @@ impl Wallet {
                 let mut lookahead = Vec::new();
                 if let Some((a, sub, seen, t)) = scripts.get(&output.script_pubkey) {
                     lookahead =
-                        master_account.get_mut((*a, *sub)).unwrap().look_ahead(*seen).unwrap()
+                        master_account.get_mut((*a, *sub)).unwrap().do_look_ahead(*seen).unwrap()
                             .iter().map(move |(kix, s)| (*a, *sub, *kix, s.clone(), t.clone())).collect();
                     self.owned.insert(OutPoint { txid: tx.txid(), vout: vout as u32 },
                                       (output.clone(), *a, *sub, *seen, t.clone()));
