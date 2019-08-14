@@ -203,7 +203,7 @@ impl Unlocker {
 
 /// Key derivation detail information
 /// coordinates of a key as defined in BIP32 and BIP44
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDerivation {
     /// m / purpose' / coin_type' / account' / sub / kix
     pub account: u32,

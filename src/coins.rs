@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use account::{MasterAccount, KeyDerivation};
 use proved::ProvedTransaction;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 /// a coin is defined by the spendable output
 /// the key derivation that allows to spend it
 pub struct Coin {
@@ -34,6 +34,7 @@ pub struct Coin {
 }
 
 /// Manage owned coins
+#[derive(Eq, PartialEq)]
 pub struct Coins {
     /// coins owned
     owned: HashMap<OutPoint, Coin>,
