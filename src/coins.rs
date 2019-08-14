@@ -48,9 +48,9 @@ impl Coins {
     }
 
     /// this should only be used to restore previously computed state
-    pub fn add_from_storage(&mut self, point: OutPoint, coin: Coin, block_hash: sha256d::Hash, proof: ProvedTransaction) {
+    pub fn add_from_storage(&mut self, point: OutPoint, coin: Coin, proof: ProvedTransaction) {
         self.owned.insert(point, coin);
-        self.proofs.insert(block_hash, proof);
+        self.proofs.insert(proof.get_transaction().txid(), proof);
     }
 
     pub fn owned(&self) -> &HashMap<OutPoint, Coin> {
