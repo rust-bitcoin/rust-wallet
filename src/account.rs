@@ -244,6 +244,15 @@ impl Account {
         Ok(sub)
     }
 
+    pub fn new_from_storage(address_type: AccountAddressType, account_number: u32, sub_account_number: u32,
+                            master_public: ExtendedPubKey, instantiated: Vec<InstantiatedKey>,
+                            next: u32, look_ahead: u32, network: Network) -> Account {
+        let context = Arc::new(SecpContext::new());
+        Account {
+            address_type, account_number, sub_account_number, context, master_public, instantiated, next, look_ahead, network
+        }
+    }
+
     pub fn address_type (&self) -> AccountAddressType {
         self.address_type
     }
