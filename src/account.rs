@@ -172,12 +172,7 @@ impl Unlocker {
     pub fn sub_account_key(&mut self, address_type: AccountAddressType, account: u32, sub_account: u32) -> Result<ExtendedPrivKey, WalletError> {
         let by_purpose = self.cached.entry(address_type).or_insert(
             (
-                match address_type {
-                    AccountAddressType::P2PKH => self.context.private_child(&self.master_private, ChildNumber::Hardened { index: 44 })?,
-                    AccountAddressType::P2SHWPKH => self.context.private_child(&self.master_private, ChildNumber::Hardened { index: 49 })?,
-                    AccountAddressType::P2WPKH => self.context.private_child(&self.master_private, ChildNumber::Hardened { index: 84 })?,
-                    AccountAddressType::P2WSH(index) => self.context.private_child(&self.master_private, ChildNumber::Hardened { index })?
-                }
+                self.context.private_child(&self.master_private, ChildNumber::Hardened { index: address_type.as_u32() })?
                 , HashMap::new()));
         let coin_type = match self.network {
             Network::Bitcoin => 0,
@@ -217,6 +212,26 @@ pub enum AccountAddressType {
     /// Only supports scripts that can be spent with following witness:
     /// <signature> <scriptCode>
     P2WSH(u32),
+}
+
+impl AccountAddressType {
+    pub fn as_u32 (&self) -> u32 {
+        match self {
+            AccountAddressType::P2PKH => 44,
+            AccountAddressType::P2SHWPKH => 49,
+            AccountAddressType::P2WPKH => 84,
+            AccountAddressType::P2WSH(n) => *n
+        }
+    }
+
+    pub fn from_u32(n: u32) -> AccountAddressType {
+        match n {
+            44 => AccountAddressType::P2PKH,
+            49 => AccountAddressType::P2SHWPKH,
+            84 => AccountAddressType::P2WPKH,
+            n => AccountAddressType::P2WSH(n)
+        }
+    }
 }
 
 pub struct Account {
