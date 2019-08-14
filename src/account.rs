@@ -118,8 +118,11 @@ impl MasterAccount {
         self.accounts.get_mut(&account)
     }
 
-    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, u32, u32, Script, Option<Vec<u8>>)> + 'a {
-        self.accounts.iter().flat_map(|((an, sub), a)| a.get_scripts().map(move |(kix, s, tweak)| (*an, *sub, kix, s, tweak)))
+    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(Script, KeyDerivation)> + 'a {
+        self.accounts.iter().flat_map(
+            |((an, sub), a)|
+                a.get_scripts().map(move |(kix, s, tweak)|
+                    (s, KeyDerivation{ account: *an, sub: *sub, kix, tweak})))
     }
 
     pub fn add_account(&mut self, account: Account) {
@@ -196,6 +199,20 @@ impl Unlocker {
         }
         Ok(key)
     }
+}
+
+/// Key derivation detail information
+/// coordinates of a key as defined in BIP32 and BIP44
+#[derive(Clone, Debug)]
+pub struct KeyDerivation {
+    /// m / purpose' / coin_type' / account' / sub / kix
+    pub account: u32,
+    /// m / purpose' / coin_type' / account' / sub / kix
+    pub sub: u32,
+    /// m / purpose' / coin_type' / account' / sub / kix
+    pub kix: u32,
+    /// optional additive tweak to private key
+    pub tweak: Option<Vec<u8>>
 }
 
 /// Address type an account is using

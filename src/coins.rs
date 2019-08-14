@@ -14,20 +14,30 @@
 // limitations under the License.
 //
 //!
-//! # Wallet
+//! # Owned coins
 //!
 //!
 
 use bitcoin_hashes::sha256d;
-use bitcoin::{OutPoint, TxOut};
+use bitcoin::{OutPoint, TxOut, Script};
 use bitcoin::Block;
 use std::collections::HashMap;
-use account::MasterAccount;
+use account::{MasterAccount, KeyDerivation};
 use proved::ProvedTransaction;
+
+#[derive(Clone, Debug)]
+/// a coin is defined by the spendable output
+/// the key derivation that allows to spend it
+pub struct Coin {
+    pub output: TxOut,
+    pub derivation: KeyDerivation
+}
 
 /// Manage owned coins
 pub struct Coins {
-    owned: HashMap<OutPoint, (TxOut, u32, u32, u32, Option<Vec<u8>>)>,
+    /// coins owned
+    owned: HashMap<OutPoint, Coin>,
+    /// SPV proofs of transactions holding owned coins
     proofs: HashMap<sha256d::Hash, ProvedTransaction>,
 }
 
@@ -60,8 +70,7 @@ impl Coins {
     /// there is nothing in them you would care (this will be easy to tell with committed BIP158
     /// filters, but we are not yet there)
     pub fn process(&mut self, master_account: &mut MasterAccount, block: &Block) {
-        let mut scripts: HashMap<_,_> = master_account.get_scripts()
-            .map(|(a, sub, k, s, t)| (s, (a, sub, k, t))).collect();
+        let mut scripts: HashMap<Script, KeyDerivation> = master_account.get_scripts().collect();
 
         for (txnr, tx) in block.txdata.iter().enumerate() {
             for input in tx.input.iter().skip(1) {
@@ -72,41 +81,36 @@ impl Coins {
             }
             for (vout, output) in tx.output.iter().enumerate() {
                 let mut lookahead = Vec::new();
-                if let Some((a, sub, seen, t)) = scripts.get(&output.script_pubkey) {
+                if let Some(d) = scripts.get(&output.script_pubkey) {
+                    let seen = d.kix;
                     lookahead =
-                        master_account.get_mut((*a, *sub)).unwrap().do_look_ahead(*seen).unwrap()
-                            .iter().map(move |(kix, s)| (*a, *sub, *kix, s.clone(), t.clone())).collect();
+                        master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(seen).unwrap()
+                            .iter().map(move |(kix, s)| (s.clone(), KeyDerivation{ kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone()})).collect();
                     self.owned.insert(OutPoint { txid: tx.txid(), vout: vout as u32 },
-                                      (output.clone(), *a, *sub, *seen, t.clone()));
+                                      Coin { output: output.clone(), derivation: d.clone()});
                     self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
                 }
-                for (a, sub, kix, s, t) in lookahead {
-                    scripts.insert(s, (a, sub, kix, t));
+                for (s, d) in lookahead {
+                    scripts.insert(s.clone(), d);
                 }
             }
         }
     }
 
     /// get random owned coins of sufficient amount that pass a filter
-    /// The filter is called with parameters:
-    /// block_hash the coin was confirmed in
-    /// transaction id with coin output
-    /// coin output within the transaction
-    /// account number
-    /// sub account number
-    /// key index
-    /// optional tweak
-    pub fn get_coins<V> (&self,  minimum: u64, filter: V) -> Vec<(OutPoint, TxOut, u32, u32, u32, Option<Vec<u8>>)>
-        where V: Fn(&sha256d::Hash, &OutPoint, &TxOut, &u32, &u32, &u32, &Option<Vec<u8>>) -> bool {
+    pub fn get_coins<V> (&self,  minimum: u64, filter: V) -> Vec<(OutPoint, Coin)>
+        where V: Fn(&sha256d::Hash, &OutPoint, &Coin) -> bool {
         let mut sum = 0u64;
 
         self.owned.iter()
-            .filter_map(|(p, (o, a, sub, k, t))|
-                if filter(self.proofs.get(&p.txid).unwrap().get_block_hash(), &p, &o, a, sub, k, t) {
-                    Some((p.clone(), o.clone(), *a, *sub, *k, t.clone()))
-                }else{
+            .filter_map(|(point, details)| {
+                let details = details.clone();
+                if filter(self.proofs.get(&point.txid).unwrap().get_block_hash(), &point, &details) {
+                    Some((point.clone(), details))
+                } else {
                     None
                 }
-            ).take_while(move |(_, o, _, _, _, _)| {sum += o.value; sum < minimum}).collect()
+            }
+            ).take_while(move |(_,d)| {sum += d.output.value; sum < minimum}).collect()
     }
 }
