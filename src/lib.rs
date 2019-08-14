@@ -37,6 +37,6 @@ pub mod mnemonic;
 pub mod error;
 pub mod context;
 pub mod account;
-pub mod wallet;
+pub mod coins;
 pub mod proved;
 

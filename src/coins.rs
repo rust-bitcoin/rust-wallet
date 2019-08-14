@@ -25,15 +25,15 @@ use std::collections::HashMap;
 use account::MasterAccount;
 use proved::ProvedTransaction;
 
-/// A wallet
-pub struct Wallet {
+/// Manage owned coins
+pub struct Coins {
     owned: HashMap<OutPoint, (TxOut, u32, u32, u32, Option<Vec<u8>>)>,
     proofs: HashMap<sha256d::Hash, ProvedTransaction>,
 }
 
-impl Wallet {
-    pub fn new () -> Wallet {
-        Wallet { owned: HashMap::new(), proofs: HashMap::new() }
+impl Coins {
+    pub fn new () -> Coins {
+        Coins { owned: HashMap::new(), proofs: HashMap::new() }
     }
 
     pub fn prove (&self, txid: &sha256d::Hash) -> Option<&ProvedTransaction> {
@@ -56,8 +56,9 @@ impl Wallet {
     }
 
     /// process a block to find own coins
-    /// processing should be in trunk order and only once per block.
-    /// It is fine to skip blocks
+    /// processing should be in ascending height order, it is fine to skip blocks  if you know
+    /// there is nothing in them you would care (this will be easy to tell with committed BIP158
+    /// filters, but we are not yet there)
     pub fn process(&mut self, master_account: &mut MasterAccount, block: &Block) {
         let mut scripts: HashMap<_,_> = master_account.get_scripts()
             .map(|(a, sub, k, s, t)| (s, (a, sub, k, t))).collect();
