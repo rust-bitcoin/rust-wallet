@@ -80,14 +80,16 @@ impl Coins {
     /// processing should be in ascending height order, it is fine to skip blocks  if you know
     /// there is nothing in them you would care (this will be easy to tell with committed BIP158
     /// filters, but we are not yet there)
-    pub fn process(&mut self, master_account: &mut MasterAccount, block: &Block) {
+    pub fn process(&mut self, master_account: &mut MasterAccount, block: &Block) -> bool {
         let mut scripts: HashMap<Script, KeyDerivation> = master_account.get_scripts().collect();
 
+        let mut modified = false;
         for (txnr, tx) in block.txdata.iter().enumerate() {
             for input in tx.input.iter().skip(1) {
                 self.owned.remove(&input.previous_output);
                 if self.owned.iter().any(|(point,_)| point.txid == input.previous_output.txid) == false {
                     self.proofs.remove(&input.previous_output.txid);
+                    modified = true;
                 }
             }
             for (vout, output) in tx.output.iter().enumerate() {
@@ -100,12 +102,14 @@ impl Coins {
                     self.owned.insert(OutPoint { txid: tx.txid(), vout: vout as u32 },
                                       Coin { output: output.clone(), derivation: d.clone()});
                     self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
+                    modified = true;
                 }
                 for (s, d) in lookahead {
                     scripts.insert(s.clone(), d);
                 }
             }
         }
+        modified
     }
 
     /// get random owned coins of sufficient amount that pass a filter
