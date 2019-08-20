@@ -61,6 +61,10 @@ impl Coins {
         &self.proofs
     }
 
+    pub fn balance(&self) -> u64 {
+        self.owned.values().map(|c| c.output.value).sum::<u64>()
+    }
+
     /// unwind the tip of the trunk
     pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) {
         // this means we might have lost control of coins at least temporarily
@@ -86,10 +90,11 @@ impl Coins {
         let mut modified = false;
         for (txnr, tx) in block.txdata.iter().enumerate() {
             for input in tx.input.iter().skip(1) {
-                self.owned.remove(&input.previous_output);
-                if self.owned.iter().any(|(point,_)| point.txid == input.previous_output.txid) == false {
-                    self.proofs.remove(&input.previous_output.txid);
-                    modified = true;
+                if self.owned.remove(&input.previous_output).is_some() {
+                    if self.owned.iter().any(|(point, _)| point.txid == input.previous_output.txid) == false {
+                        self.proofs.remove(&input.previous_output.txid);
+                        modified = true;
+                    }
                 }
             }
             for (vout, output) in tx.output.iter().enumerate() {
