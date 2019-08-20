@@ -396,6 +396,7 @@ impl Account {
                             input.script_sig = Builder::new()
                                 .push_slice(signature.as_slice())
                                 .push_slice(instantiated.public.to_bytes().as_slice()).into_script();
+                            input.witness.clear();
                             signed += 1;
                         }
                         AccountAddressType::P2WPKH => {
@@ -408,6 +409,7 @@ impl Account {
                             bip143hasher = Some(hasher);
                             let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             signature.push(hash_type.as_u32() as u8);
+                            input.witness.clear();
                             input.witness.push(signature);
                             input.witness.push(instantiated.public.to_bytes());
                             signed += 1;
@@ -425,6 +427,7 @@ impl Account {
                             bip143hasher = Some(hasher);
                             let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             signature.push(hash_type.as_u32() as u8);
+                            input.witness.clear();
                             input.witness.push(signature);
                             input.witness.push(instantiated.public.to_bytes());
                             signed += 1;
@@ -439,6 +442,7 @@ impl Account {
                             bip143hasher = Some(hasher);
                             let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             signature.push(hash_type.as_u32() as u8);
+                            input.witness.clear();
                             input.witness.push(signature);
                             input.witness.push(instantiated.script_code.to_bytes());
                             signed += 1;
