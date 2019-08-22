@@ -53,8 +53,9 @@ impl Coins {
         self.proofs.insert(proof.get_transaction().txid(), proof);
     }
 
-    /// this should only be used to restore previously computed state
-    pub fn remove_from_storage(&mut self, point: &OutPoint) {
+    /// use this if coin is spet but not yet confirmed, so subsequent spends do not pick up the
+    /// same coin
+    pub fn remove_coin(&mut self, point: &OutPoint) {
         self.owned.remove(point);
         if self.owned.iter().any(|(p, _)| p.txid == point.txid) == false {
             self.proofs.remove(&point.txid);
