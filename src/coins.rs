@@ -67,7 +67,7 @@ impl Coins {
     pub fn process_unconfirmed_transaction(&mut self, master_account: &mut MasterAccount, transaction: &Transaction) -> bool {
         let mut scripts: HashMap<Script, KeyDerivation> = master_account.get_scripts().collect();
         let mut modified = false;
-        for input in transaction.input.iter().skip(1) {
+        for input in transaction.input.iter() {
             modified |= self.remove_confirmed(&input.previous_output);
         }
         for (vout, output) in transaction.output.iter().enumerate() {
@@ -133,8 +133,10 @@ impl Coins {
 
         let mut modified = false;
         for (txnr, tx) in block.txdata.iter().enumerate() {
-            for input in tx.input.iter().skip(1) {
-                modified |= self.remove_confirmed(&input.previous_output);
+            if txnr > 0 { // skip coinbase
+                for input in tx.input.iter() {
+                    modified |= self.remove_confirmed(&input.previous_output);
+                }
             }
             for (vout, output) in tx.output.iter().enumerate() {
                 let mut lookahead = Vec::new();
