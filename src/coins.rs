@@ -19,7 +19,7 @@
 //!
 
 use bitcoin_hashes::sha256d;
-use bitcoin::{OutPoint, TxOut, Script};
+use bitcoin::{OutPoint, TxOut, Script, Transaction};
 use bitcoin::Block;
 use std::collections::HashMap;
 use account::{MasterAccount, KeyDerivation};
@@ -33,45 +33,79 @@ pub struct Coin {
     pub derivation: KeyDerivation
 }
 
-/// Manage owned coins
+/// Manage coins
 #[derive(Eq, PartialEq)]
 pub struct Coins {
-    /// coins owned
-    owned: HashMap<OutPoint, Coin>,
-    /// SPV proofs of transactions holding owned coins
+    /// unconfirmed coins
+    unconfirmed: HashMap<OutPoint, Coin>,
+    /// confirmed coins (these have SPV proofs)
+    confirmed: HashMap<OutPoint, Coin>,
+    /// SPV proofs of transactions confirming coins
     proofs: HashMap<sha256d::Hash, ProvedTransaction>,
 }
 
 impl Coins {
     pub fn new () -> Coins {
-        Coins { owned: HashMap::new(), proofs: HashMap::new() }
+        Coins { confirmed: HashMap::new(), proofs: HashMap::new(), unconfirmed: HashMap::new() }
     }
 
     /// this should only be used to restore previously computed state
-    pub fn add_from_storage(&mut self, point: OutPoint, coin: Coin, proof: ProvedTransaction) {
-        self.owned.insert(point, coin);
+    pub fn add_confirmed(&mut self, point: OutPoint, coin: Coin, proof: ProvedTransaction) {
+        self.confirmed.insert(point, coin);
         self.proofs.insert(proof.get_transaction().txid(), proof);
     }
 
-    /// use this if coin is spet but not yet confirmed, so subsequent spends do not pick up the
-    /// same coin
-    pub fn remove_coin(&mut self, point: &OutPoint) {
-        self.owned.remove(point);
-        if self.owned.iter().any(|(p, _)| p.txid == point.txid) == false {
+    pub fn remove_confirmed(&mut self, point: &OutPoint) -> bool {
+        let modified = self.confirmed.remove(point).is_some();
+        if modified && self.confirmed.iter().any(|(p, _)| p.txid == point.txid) == false {
             self.proofs.remove(&point.txid);
         }
+        modified
     }
 
-    pub fn owned(&self) -> &HashMap<OutPoint, Coin> {
-        &self.owned
+    /// process an unconfirmed transaction. Useful eg. to process own spends.
+    pub fn process_unconfirmed_transaction(&mut self, master_account: &mut MasterAccount, transaction: &Transaction) -> bool {
+        let mut scripts: HashMap<Script, KeyDerivation> = master_account.get_scripts().collect();
+        let mut modified = false;
+        for input in transaction.input.iter().skip(1) {
+            modified |= self.remove_confirmed(&input.previous_output);
+        }
+        for (vout, output) in transaction.output.iter().enumerate() {
+            let mut lookahead = Vec::new();
+            if let Some(d) = scripts.get(&output.script_pubkey) {
+                let seen = d.kix;
+                lookahead =
+                    master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(seen).unwrap()
+                        .iter().map(move |(kix, s)| (s.clone(), KeyDerivation { kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone() })).collect();
+                self.unconfirmed.insert(OutPoint { txid: transaction.txid(), vout: vout as u32 },
+                                      Coin { output: output.clone(), derivation: d.clone() });
+                modified = true;
+            }
+            for (s, d) in lookahead {
+                scripts.insert(s.clone(), d);
+            }
+        }
+        modified
+    }
+
+    pub fn confirmed(&self) -> &HashMap<OutPoint, Coin> {
+        &self.confirmed
+    }
+
+    pub fn unconfirmed(&self) -> &HashMap<OutPoint, Coin> {
+        &self.unconfirmed
     }
 
     pub fn proofs(&self) -> &HashMap<sha256d::Hash, ProvedTransaction> {
         &self.proofs
     }
 
-    pub fn balance(&self) -> u64 {
-        self.owned.values().map(|c| c.output.value).sum::<u64>()
+    pub fn confirmed_balance(&self) -> u64 {
+        self.confirmed.values().map(|c| c.output.value).sum::<u64>()
+    }
+
+    pub fn unconfirmed_balance(&self) -> u64 {
+        self.unconfirmed.values().map(|c| c.output.value).sum::<u64>()
     }
 
     /// unwind the tip of the trunk
@@ -81,11 +115,12 @@ impl Coins {
             .filter_map(|t| if *t.get_block_hash() == *block_hash {
                 Some(t.get_transaction().txid())
             } else { None })
-            .flat_map(|txid| self.owned.keys().filter(move |point| point.txid == txid)).cloned().collect::<Vec<OutPoint>>();
+            .flat_map(|txid| self.confirmed.keys().filter(move |point| point.txid == txid)).cloned().collect::<Vec<OutPoint>>();
 
         for point in lost_coins {
             self.proofs.remove(&point.txid);
-            self.owned.remove(&point);
+            let coin = self.confirmed.remove(&point).unwrap();
+            self.unconfirmed.insert(point, coin);
         }
     }
 
@@ -99,12 +134,7 @@ impl Coins {
         let mut modified = false;
         for (txnr, tx) in block.txdata.iter().enumerate() {
             for input in tx.input.iter().skip(1) {
-                if self.owned.remove(&input.previous_output).is_some() {
-                    if self.owned.iter().any(|(point, _)| point.txid == input.previous_output.txid) == false {
-                        self.proofs.remove(&input.previous_output.txid);
-                        modified = true;
-                    }
-                }
+                modified |= self.remove_confirmed(&input.previous_output);
             }
             for (vout, output) in tx.output.iter().enumerate() {
                 let mut lookahead = Vec::new();
@@ -113,8 +143,9 @@ impl Coins {
                     lookahead =
                         master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(seen).unwrap()
                             .iter().map(move |(kix, s)| (s.clone(), KeyDerivation{ kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone()})).collect();
-                    self.owned.insert(OutPoint { txid: tx.txid(), vout: vout as u32 },
-                                      Coin { output: output.clone(), derivation: d.clone()});
+                    let point = OutPoint { txid: tx.txid(), vout: vout as u32 };
+                    self.unconfirmed.remove(&point);
+                    self.confirmed.insert(point, Coin { output: output.clone(), derivation: d.clone()});
                     self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
                     modified = true;
                 }
@@ -126,12 +157,12 @@ impl Coins {
         modified
     }
 
-    /// get random owned coins of sufficient amount that pass a filter
-    pub fn get_coins<V> (&self,  minimum: u64, filter: V) -> Vec<(OutPoint, Coin)>
+    /// get random confirmed coins of sufficient amount that pass a filter
+    pub fn get_confirmed_coins<V> (&self,  minimum: u64, filter: V) -> Vec<(OutPoint, Coin)>
         where V: Fn(&sha256d::Hash, &OutPoint, &Coin) -> bool {
         let mut sum = 0u64;
 
-        self.owned.iter()
+        self.confirmed.iter()
             .filter_map(|(point, details)| {
                 let details = details.clone();
                 if filter(self.proofs.get(&point.txid).unwrap().get_block_hash(), &point, &details) {
