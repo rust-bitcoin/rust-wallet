@@ -171,6 +171,6 @@ impl Coins {
                     None
                 }
             }
-            ).take_while(move |(_,d)| {sum += d.output.value; sum < minimum}).collect()
+            ).take_while(move |(_,d)| {sum += d.output.value; sum <= minimum}).collect()
     }
 }
