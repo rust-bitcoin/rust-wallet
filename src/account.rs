@@ -31,7 +31,7 @@ use context::SecpContext;
 use error::WalletError;
 use bitcoin::util::bip32::ExtendedPubKey;
 use crate::mnemonic::Mnemonic;
-use secp256k1::rand::{thread_rng, Rng};
+use rand::{thread_rng, RngCore};
 use std::time::{SystemTime, UNIX_EPOCH};
 use crypto::hmac::Hmac;
 use crypto::sha2::Sha512;
@@ -391,10 +391,11 @@ impl Account {
                     match self.address_type {
                         AccountAddressType::P2PKH => {
                             let sighash = txclone.signature_hash(ix, &instantiated.address.script_pubkey(), hash_type.as_u32());
-                            let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
-                            signature.push(hash_type.as_u32() as u8);
+                            let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
+                            let mut with_hashtype = signature.to_vec();
+                            with_hashtype.push(hash_type.as_u32() as u8);
                             input.script_sig = Builder::new()
-                                .push_slice(signature.as_slice())
+                                .push_slice(with_hashtype.as_slice())
                                 .push_slice(instantiated.public.to_bytes().as_slice()).into_script();
                             input.witness.clear();
                             signed += 1;
@@ -407,10 +408,11 @@ impl Account {
                             let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
                             let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
                             bip143hasher = Some(hasher);
-                            let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
-                            signature.push(hash_type.as_u32() as u8);
+                            let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
+                            let mut with_hashtype = signature.to_vec();
+                            with_hashtype.push(hash_type.as_u32() as u8);
                             input.witness.clear();
-                            input.witness.push(signature);
+                            input.witness.push(with_hashtype);
                             input.witness.push(instantiated.public.to_bytes());
                             signed += 1;
                         }
@@ -425,10 +427,11 @@ impl Account {
                             let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
                             let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
                             bip143hasher = Some(hasher);
-                            let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
-                            signature.push(hash_type.as_u32() as u8);
+                            let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
+                            let mut with_hashtype = signature.to_vec();
+                            with_hashtype.push(hash_type.as_u32() as u8);
                             input.witness.clear();
-                            input.witness.push(signature);
+                            input.witness.push(with_hashtype);
                             input.witness.push(instantiated.public.to_bytes());
                             signed += 1;
                         }
@@ -440,10 +443,11 @@ impl Account {
                             let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
                             let sighash = hasher.sighash_all(&txclone.input[ix], &instantiated.script_code, spend.value);
                             bip143hasher = Some(hasher);
-                            let mut signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
-                            signature.push(hash_type.as_u32() as u8);
+                            let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
+                            let mut with_hashtype = signature.to_vec();
+                            with_hashtype.push(hash_type.as_u32() as u8);
                             input.witness.clear();
-                            input.witness.push(signature);
+                            input.witness.push(with_hashtype);
                             input.witness.push(instantiated.script_code.to_bytes());
                             signed += 1;
                         }
@@ -601,7 +605,9 @@ mod test {
         assert_eq!(master.sign(&mut spending_transaction, SigHashType::All,
                                &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
 
-        spending_transaction.verify(&spent).unwrap();
+        spending_transaction.verify(|point|
+            spent.get(&point.txid).and_then(|t| t.output.get(point.vout as usize).cloned())
+        ).unwrap();
     }
 
     #[test]
@@ -660,7 +666,9 @@ mod test {
         assert_eq!(master.sign(&mut spending_transaction, SigHashType::All,
                                &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
 
-        spending_transaction.verify(&spent).unwrap();
+        spending_transaction.verify(|point|
+            spent.get(&point.txid).and_then(|t| t.output.get(point.vout as usize).cloned())
+        ).unwrap();
     }
 
     #[test]
@@ -720,7 +728,9 @@ mod test {
         assert_eq!(master.sign(&mut spending_transaction, SigHashType::All,
                                &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
 
-        spending_transaction.verify(&spent).unwrap();
+        spending_transaction.verify(|point|
+            spent.get(&point.txid).and_then(|t| t.output.get(point.vout as usize).cloned())
+        ).unwrap();
     }
 
     #[test]
@@ -802,7 +812,9 @@ mod test {
             &mut spending_transaction, SigHashType::All,
             &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
 
-        spending_transaction.verify(&spent).unwrap();
+        spending_transaction.verify(|point|
+            spent.get(&point.txid).and_then(|t| t.output.get(point.vout as usize).cloned())
+        ).unwrap();
     }
 
     #[test]
