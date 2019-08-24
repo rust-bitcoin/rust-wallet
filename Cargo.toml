@@ -11,7 +11,7 @@ keywords = [ "crypto", "bitcoin" ]
 readme = "README.md"
 
 [dependencies]
-bitcoin = {version="0.20", features=["bitcoinconsensus", "serde"]}
+bitcoin = { git= "https://github.com/tamasblummer/rust-bitcoin.git", branch = "add_serde_to_block", features=["serde"]}
 bitcoin_hashes={version="0.7", features=["serde"]}
 secp256k1 = "0.15"
 rand="0.7"
