@@ -163,7 +163,7 @@ impl Coins {
     /// get random confirmed coins of sufficient amount
     pub fn get_confirmed_coins (&self,  minimum: u64) -> Vec<(OutPoint, Coin)> {
         use rand::prelude::SliceRandom;
-
+        // TODO: knapsack
         let mut sum = 0u64;
         let mut have = self.confirmed.iter().collect::<Vec<_>>();
         have.sort_by(|(_, a), (_, b)| a.output.value.cmp(&b.output.value));
@@ -175,7 +175,13 @@ impl Coins {
                 break;
             }
         }
+        // drop some if possible
+        while let Some(index) = inputs.iter().enumerate().find_map(|(i,(_, c))| if sum - c.output.value >= minimum {Some(i)} else {None}) {
+            sum -= inputs[index].1.output.value;
+            inputs.remove(index);
+        }
         inputs.shuffle(&mut thread_rng());
         inputs
     }
+
 }
