@@ -163,8 +163,8 @@ impl Coins {
     pub fn get_confirmed_coins<V> (&self,  minimum: u64, filter: V) -> Vec<(OutPoint, Coin)>
         where V: Fn(&sha256d::Hash, &OutPoint, &Coin) -> bool {
         let mut sum = 0u64;
-
-        self.confirmed.iter()
+        let mut inputs = Vec::new();
+        for input in self.confirmed.iter()
             .filter_map(|(point, details)| {
                 let details = details.clone();
                 if filter(self.proofs.get(&point.txid).unwrap().get_block_hash(), &point, &details) {
@@ -173,6 +173,13 @@ impl Coins {
                     None
                 }
             }
-            ).take_while(move |(_,d)| {sum += d.output.value; sum == d.output.value || sum <= minimum}).collect()
+            ) {
+            sum += input.1.output.value;
+            inputs.push(input);
+            if sum >= minimum {
+                break;
+            }
+        }
+        inputs
     }
 }
