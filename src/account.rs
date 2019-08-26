@@ -325,6 +325,8 @@ impl Account {
     pub fn do_look_ahead(&mut self, seen: u32) -> Result<Vec<(u32, Script)>, WalletError> {
         use std::cmp::max;
 
+        self.next = max(self.next, seen + 1);
+
         let have = self.instantiated.len() as u32;
         let need = max(seen + self.look_ahead, have) - have;
         let mut new = Vec::new();
