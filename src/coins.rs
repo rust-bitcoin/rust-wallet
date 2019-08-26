@@ -24,6 +24,7 @@ use bitcoin::Block;
 use std::collections::HashMap;
 use account::{MasterAccount, KeyDerivation};
 use proved::ProvedTransaction;
+use rand::thread_rng;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 /// a coin is defined by the spendable output
@@ -159,27 +160,22 @@ impl Coins {
         modified
     }
 
-    /// get random confirmed coins of sufficient amount that pass a filter
-    pub fn get_confirmed_coins<V> (&self,  minimum: u64, filter: V) -> Vec<(OutPoint, Coin)>
-        where V: Fn(&sha256d::Hash, &OutPoint, &Coin) -> bool {
+    /// get random confirmed coins of sufficient amount
+    pub fn get_confirmed_coins (&self,  minimum: u64) -> Vec<(OutPoint, Coin)> {
+        use rand::prelude::SliceRandom;
+
         let mut sum = 0u64;
+        let mut have = self.confirmed.iter().collect::<Vec<_>>();
+        have.sort_by(|(_, a), (_, b)| a.output.value.cmp(&b.output.value));
         let mut inputs = Vec::new();
-        for input in self.confirmed.iter()
-            .filter_map(|(point, details)| {
-                let details = details.clone();
-                if filter(self.proofs.get(&point.txid).unwrap().get_block_hash(), &point, &details) {
-                    Some((point.clone(), details))
-                } else {
-                    None
-                }
-            }
-            ) {
-            sum += input.1.output.value;
-            inputs.push(input);
+        for (point, coin) in have.iter() {
+            sum += coin.output.value;
+            inputs.push(((**point).clone(), (**coin).clone()));
             if sum >= minimum {
                 break;
             }
         }
+        inputs.shuffle(&mut thread_rng());
         inputs
     }
 }
