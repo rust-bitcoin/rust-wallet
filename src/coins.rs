@@ -177,9 +177,8 @@ impl Coins {
         }
         let mut change = sum - minimum;
         // drop some if possible
-        while let Some(index) = inputs.iter().enumerate().find_map(|(i,(_, c))| if c.output.value < change || sum - c.output.value >= minimum {Some(i)} else {None}) {
+        while let Some(index) = inputs.iter().enumerate().find_map(|(i,(_, c))| if c.output.value <= change {Some(i)} else {None}) {
             let removed = inputs[index].1.output.value;
-            sum -= removed;
             change -= removed;
             inputs.remove(index);
         }
