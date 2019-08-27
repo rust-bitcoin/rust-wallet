@@ -183,12 +183,14 @@ impl Coins {
                 break;
             }
         }
-        let mut change = sum - minimum;
-        // drop some if possible
-        while let Some(index) = inputs.iter().enumerate().find_map(|(i,(_, c))| if c.output.value <= change {Some(i)} else {None}) {
-            let removed = inputs[index].1.output.value;
-            change -= removed;
-            inputs.remove(index);
+        if sum > minimum {
+            let mut change = sum - minimum;
+            // drop some if possible
+            while let Some(index) = inputs.iter().enumerate().find_map(|(i, (_, c))| if c.output.value <= change { Some(i) } else { None }) {
+                let removed = inputs[index].1.output.value;
+                change -= removed;
+                inputs.remove(index);
+            }
         }
         inputs.shuffle(&mut thread_rng());
         inputs
