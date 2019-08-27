@@ -77,7 +77,7 @@ impl Coins {
                 let seen = d.kix;
                 lookahead =
                     master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(seen).unwrap()
-                        .iter().map(move |(kix, s)| (s.clone(), KeyDerivation { kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone() })).collect();
+                        .iter().map(move |(kix, s)| (s.clone(), KeyDerivation { kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone(), csv: d.csv.clone() })).collect();
                 self.unconfirmed.insert(OutPoint { txid: transaction.txid(), vout: vout as u32 },
                                       Coin { output: output.clone(), derivation: d.clone() });
                 modified = true;
@@ -145,7 +145,7 @@ impl Coins {
                     let seen = d.kix;
                     lookahead =
                         master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(seen).unwrap()
-                            .iter().map(move |(kix, s)| (s.clone(), KeyDerivation{ kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone()})).collect();
+                            .iter().map(move |(kix, s)| (s.clone(), KeyDerivation{ kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone(), csv: d.csv.clone()})).collect();
                     let point = OutPoint { txid: tx.txid(), vout: vout as u32 };
                     self.unconfirmed.remove(&point);
                     self.confirmed.insert(point, Coin { output: output.clone(), derivation: d.clone()});
@@ -161,11 +161,19 @@ impl Coins {
     }
 
     /// get random confirmed coins of sufficient amount
-    pub fn get_confirmed_coins (&self,  minimum: u64) -> Vec<(OutPoint, Coin)> {
+    pub fn get_confirmed_coins<H> (&self,  minimum: u64, height: u32, block_height: H) -> Vec<(OutPoint, Coin)>
+        where H: Fn(&sha256d::Hash) -> Option<u32> {
         use rand::prelude::SliceRandom;
         // TODO: knapsack
         let mut sum = 0u64;
-        let mut have = self.confirmed.iter().collect::<Vec<_>>();
+        let mut have = self.confirmed.iter()
+            .filter( |(p,c)| {
+                if let Some(csv) = c.derivation.csv {
+                    let proof = self.proofs.get(&p.txid).expect("missing proof of confirmed transaction");
+                    return block_height(proof.get_block_hash()).expect("coin not confirmed") + (csv as u32) <= height;
+                }
+                return true;
+            }).collect::<Vec<_>>();
         have.sort_by(|(_, a), (_, b)| a.output.value.cmp(&b.output.value));
         let mut inputs = Vec::new();
         for (point, coin) in have.iter() {

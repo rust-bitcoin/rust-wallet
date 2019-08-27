@@ -125,8 +125,8 @@ impl MasterAccount {
     pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(Script, KeyDerivation)> + 'a {
         self.accounts.iter().flat_map(
             |((an, sub), a)|
-                a.get_scripts().map(move |(kix, s, tweak)|
-                    (s, KeyDerivation{ account: *an, sub: *sub, kix, tweak})))
+                a.get_scripts().map(move |(kix, s, tweak, csv)|
+                    (s, KeyDerivation{ account: *an, sub: *sub, kix, tweak, csv})))
     }
 
     pub fn add_account(&mut self, account: Account) {
@@ -216,7 +216,9 @@ pub struct KeyDerivation {
     /// m / purpose' / coin_type' / account' / sub / kix
     pub kix: u32,
     /// optional additive tweak to private key
-    pub tweak: Option<Vec<u8>>
+    pub tweak: Option<Vec<u8>>,
+    /// optional number of blocks this can not be spent after confirmation (OP_CSV)
+    pub csv: Option<u16>
 }
 
 /// Address type an account is using
@@ -358,14 +360,14 @@ impl Account {
         self.instantiated.get(kix as usize)
     }
 
-    pub fn add_script_key(&mut self, pk: PublicKey, script_code: Script, tweak: Option<&[u8]>) -> Result<u32, WalletError> {
+    pub fn add_script_key(&mut self, pk: PublicKey, script_code: Script, tweak: Option<&[u8]>, csv: Option<u16>) -> Result<u32, WalletError> {
         match self.address_type {
             AccountAddressType::P2WSH(_) => {}
             _ => return Err(WalletError::Unsupported("add_script_key can only be used for P2WSH accounts"))
         }
         let index = self.instantiated.len() as u32;
         let instantiated = InstantiatedKey::new(self.address_type, self.network, pk,
-                                                tweak, index, Some(script_code), self.context.clone())?;
+                                                tweak, index, Some(script_code), csv, self.context.clone())?;
         self.instantiated.push(instantiated);
         Ok((self.instantiated.len() - 1) as u32)
     }
@@ -375,8 +377,8 @@ impl Account {
     }
 
     // get all pubkey scripts of this account
-    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, Script, Option<Vec<u8>>)> + 'a {
-        self.instantiated.iter().enumerate().map(|(kix, i)| (kix as u32, i.script_pubkey.clone(), i.tweak.clone()))
+    pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, Script, Option<Vec<u8>>, Option<u16>)> + 'a {
+        self.instantiated.iter().enumerate().map(|(kix, i)| (kix as u32, i.script_pubkey.clone(), i.tweak.clone(), i.csv.clone()))
     }
 
     /// sign a transaction with keys in this account works for types except P2WSH
@@ -469,16 +471,17 @@ pub struct InstantiatedKey {
     pub script_code: Script,
     pub address: Address,
     pub script_pubkey: Script,
-    pub tweak: Option<Vec<u8>>
+    pub tweak: Option<Vec<u8>>,
+    pub csv: Option<u16>
 }
 
 
 impl InstantiatedKey {
     pub fn new_from_extended_key(address_type: AccountAddressType, network: Network, index: u32, ek: &ExtendedPubKey, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError> {
-        return Self::new(address_type, network, context.public_child(&ek, ChildNumber::Normal {index})?.public_key, None, index, None, context);
+        return Self::new(address_type, network, context.public_child(&ek, ChildNumber::Normal {index})?.public_key, None, index, None, None, context);
     }
 
-    pub fn new(address_type: AccountAddressType, network: Network, mut public: PublicKey, tweak: Option<&[u8]>, index: u32, script_code: Option<Script>, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError> {
+    pub fn new(address_type: AccountAddressType, network: Network, mut public: PublicKey, tweak: Option<&[u8]>, index: u32, script_code: Option<Script>, csv: Option<u16>, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError> {
         if let Some(tweak) = tweak {
             context.tweak_exp_add(&mut public, tweak)?;
         }
@@ -511,7 +514,7 @@ impl InstantiatedKey {
             }
         };
         let script_pubkey = address.script_pubkey();
-        Ok(InstantiatedKey { index, public, script_code, address, script_pubkey, tweak: tweak.map(|t|t.to_vec()) })
+        Ok(InstantiatedKey { index, public, script_code, address, script_pubkey, tweak: tweak.map(|t|t.to_vec()), csv })
     }
 }
 
@@ -760,7 +763,7 @@ mod test {
                 .push_slice(pk.to_bytes().as_slice())
                 .push_opcode(all::OP_CHECKSIG)
                 .into_script();
-            account.add_script_key(pk, script_code, Some(&[0x01; 32])).unwrap();
+            account.add_script_key(pk, script_code, Some(&[0x01; 32]), None).unwrap();
         }
 
 
