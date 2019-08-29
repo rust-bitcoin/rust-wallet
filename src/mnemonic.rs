@@ -58,8 +58,6 @@ impl Mnemonic {
             }
         }
 
-        decryptor.decrypt(&mut buffer::RefReadBuffer::new(encrypted),
-                          &mut buffer::RefWriteBuffer::new(decrypted.as_mut_slice()), true)?;
         Ok(Mnemonic::from_str(String::from_utf8(decrypted).map_err(|_| WalletError::Passphrase)?.as_str())?)
     }
 
