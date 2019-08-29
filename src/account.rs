@@ -578,7 +578,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
-                    sequence: 0,
+                    sequence: 0xffffffff,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -589,8 +589,8 @@ mod test {
                     value: 5000000000,
                 }
             ],
-            lock_time: 0xffffffff,
-            version: 1,
+            lock_time: 0,
+            version: 2,
         };
         let txid = input_transaction.txid();
 
@@ -598,7 +598,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid, vout: 0 },
-                    sequence: 0,
+                    sequence: 0xffffffff,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -609,8 +609,8 @@ mod test {
                     value: 5000000000,
                 }
             ],
-            lock_time: 0xffffffff,
-            version: 1,
+            lock_time: 0,
+            version: 2,
         };
 
         let mut spent = HashMap::new();
@@ -639,7 +639,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
-                    sequence: 0,
+                    sequence: 0xffffffff,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -650,8 +650,8 @@ mod test {
                     value: 5000000000,
                 }
             ],
-            lock_time: 0x11000000,
-            version: 1,
+            lock_time: 0,
+            version: 2,
         };
         let txid = input_transaction.txid();
 
@@ -659,7 +659,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid, vout: 0 },
-                    sequence: 0,
+                    sequence: 0xffffffff,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -670,8 +670,8 @@ mod test {
                     value: 5000000000,
                 }
             ],
-            lock_time: 0x11000000,
-            version: 1,
+            lock_time: 0,
+            version: 2,
         };
 
         let mut spent = HashMap::new();
@@ -700,7 +700,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
-                    sequence: 0,
+                    sequence: 0xffffffff,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -711,8 +711,8 @@ mod test {
                     value: 5000000000,
                 }
             ],
-            lock_time: 0x11000000,
-            version: 1,
+            lock_time: 0,
+            version: 2,
         };
 
         let txid = input_transaction.txid();
@@ -721,7 +721,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid, vout: 0 },
-                    sequence: 0,
+                    sequence: 0xffffffff,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -732,8 +732,8 @@ mod test {
                     value: 5000000000,
                 }
             ],
-            lock_time: 0x11000000,
-            version: 1,
+            lock_time: 0,
+            version: 2,
         };
 
         let mut spent = HashMap::new();
@@ -781,7 +781,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
-                    sequence: 0,
+                    sequence: 0xffffffff,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -792,8 +792,8 @@ mod test {
                     value: 5000000000,
                 }
             ],
-            lock_time: 0xffffffff,
-            version: 1,
+            lock_time: 0,
+            version: 2,
         };
         let txid = input_transaction.txid();
 
@@ -801,7 +801,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid, vout: 0 },
-                    sequence: 0,
+                    sequence: 0xffffffff,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -812,8 +812,8 @@ mod test {
                     value: 5000000000,
                 }
             ],
-            lock_time: 0xffffffff,
-            version: 1,
+            lock_time: 0,
+            version: 2,
         };
 
         let mut spent = HashMap::new();
