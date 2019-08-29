@@ -278,7 +278,7 @@ impl Account {
             address_type, account_number, sub_account_number, context,
             master_public: pubic_key, instantiated: Vec::new(), next: 0, look_ahead, network: pubic_key.network
         };
-        sub.do_look_ahead(0)?;
+        sub.do_look_ahead(None)?;
         Ok(sub)
     }
 
@@ -324,11 +324,14 @@ impl Account {
     }
 
     /// look ahead from last seen
-    pub fn do_look_ahead(&mut self, seen: u32) -> Result<Vec<(u32, Script)>, WalletError> {
+    pub fn do_look_ahead(&mut self, seen: Option<u32>) -> Result<Vec<(u32, Script)>, WalletError> {
         use std::cmp::max;
 
-        self.next = max(self.next, seen + 1);
+        if let Some(seen) = seen {
+            self.next = max(self.next, seen + 1);
+        }
 
+        let seen = seen.unwrap_or(0);
         let have = self.instantiated.len() as u32;
         let need = max(seen + self.look_ahead, have) - have;
         let mut new = Vec::new();

@@ -74,9 +74,8 @@ impl Coins {
         for (vout, output) in transaction.output.iter().enumerate() {
             let mut lookahead = Vec::new();
             if let Some(d) = scripts.get(&output.script_pubkey) {
-                let seen = d.kix;
                 lookahead =
-                    master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(seen).unwrap()
+                    master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(Some(d.kix)).unwrap()
                         .iter().map(move |(kix, s)| (s.clone(), KeyDerivation { kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone(), csv: d.csv.clone() })).collect();
                 self.unconfirmed.insert(OutPoint { txid: transaction.txid(), vout: vout as u32 },
                                       Coin { output: output.clone(), derivation: d.clone() });
@@ -142,9 +141,8 @@ impl Coins {
             for (vout, output) in tx.output.iter().enumerate() {
                 let mut lookahead = Vec::new();
                 if let Some(d) = scripts.get(&output.script_pubkey) {
-                    let seen = d.kix;
                     lookahead =
-                        master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(seen).unwrap()
+                        master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(Some(d.kix)).unwrap()
                             .iter().map(move |(kix, s)| (s.clone(), KeyDerivation{ kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone(), csv: d.csv.clone()})).collect();
                     let point = OutPoint { txid: tx.txid(), vout: vout as u32 };
                     self.unconfirmed.remove(&point);
