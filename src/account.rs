@@ -829,6 +829,119 @@ mod test {
         ).unwrap();
     }
 
+    const CSV: u16 = 10;
+
+    #[test]
+    fn test_wsh_csv() {
+
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
+        master.add_account(account);
+
+        let ctx = Arc::new(SecpContext::new());
+
+        let mut pk;
+        {
+            let account = master.get_mut((0, 0)).unwrap();
+            pk = account.compute_base_public_key(0).unwrap();
+        }
+        ctx.tweak_exp_add(&mut pk, &[0x01; 32]).unwrap();
+
+        {
+            let account = master.get_mut((0, 0)).unwrap();
+            let script_code = Builder::new()
+                .push_int(CSV as i64)
+                .push_opcode(all::OP_CSV)
+                .push_opcode(all::OP_DROP)
+                .push_slice(pk.to_bytes().as_slice())
+                .push_opcode(all::OP_CHECKSIG)
+                .into_script();
+            account.add_script_key(pk, script_code, Some(&[0x01; 32]), Some(10)).unwrap();
+        }
+
+
+        let account = master.get((0,0)).unwrap();
+        let source = account.get_key(0).unwrap().address.clone();
+        let target = account.get_key(0).unwrap().address.clone();
+        let input_transaction = Transaction {
+            input: vec![
+                TxIn {
+                    previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
+                    sequence: RBF,
+                    witness: Vec::new(),
+                    script_sig: Script::new(),
+                }
+            ],
+            output: vec![
+                TxOut {
+                    script_pubkey: source.script_pubkey(),
+                    value: 5000000000,
+                }
+            ],
+            lock_time: 0,
+            version: 2,
+        };
+        let txid = input_transaction.txid();
+
+        let mut spending_transaction = Transaction {
+            input: vec![
+                TxIn {
+                    previous_output: OutPoint { txid, vout: 0 },
+                    sequence: CSV as u32,
+                    witness: Vec::new(),
+                    script_sig: Script::new(),
+                }
+            ],
+            output: vec![
+                TxOut {
+                    script_pubkey: target.script_pubkey(),
+                    value: 5000000000,
+                }
+            ],
+            lock_time: 0,
+            version: 2,
+        };
+
+        let mut spent = HashMap::new();
+        spent.insert(input_transaction.txid(), input_transaction.clone());
+
+        assert_eq!(master.sign(
+            &mut spending_transaction, SigHashType::All,
+            &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
+
+        spending_transaction.verify(|point|
+            spent.get(&point.txid).and_then(|t| t.output.get(point.vout as usize).cloned())
+        ).unwrap();
+
+        let mut spending_transaction = Transaction {
+            input: vec![
+                TxIn {
+                    previous_output: OutPoint { txid, vout: 0 },
+                    sequence: (CSV-1) as u32, // this one should not be able to spend
+                    witness: Vec::new(),
+                    script_sig: Script::new(),
+                }
+            ],
+            output: vec![
+                TxOut {
+                    script_pubkey: target.script_pubkey(),
+                    value: 5000000000,
+                }
+            ],
+            lock_time: 0,
+            version: 2,
+        };
+
+        assert_eq!(master.sign(
+            &mut spending_transaction, SigHashType::All,
+            &(|_| Some(input_transaction.output[0].clone())), &mut unlocker).unwrap(), 1);
+
+        assert!(spending_transaction.verify(|point|
+            spent.get(&point.txid).and_then(|t| t.output.get(point.vout as usize).cloned())
+        ).is_err());
+    }
+
     #[test]
     fn crosscheck_with_hardware_wallet () {
         let words = "announce damage viable ticket engage curious yellow ten clock finish burden orient faculty rigid smile host offer affair suffer slogan mercy another switch park";
