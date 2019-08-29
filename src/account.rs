@@ -563,6 +563,7 @@ mod test {
     use hex::decode;
 
     const PASSPHRASE: &str = "correct horse battery staple";
+    const RBF: u32 = 0xffffffff - 2;
 
     #[test]
     fn test_pkh() {
@@ -578,7 +579,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
-                    sequence: 0xffffffff,
+                    sequence: RBF,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -598,7 +599,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid, vout: 0 },
-                    sequence: 0xffffffff,
+                    sequence: RBF,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -639,7 +640,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
-                    sequence: 0xffffffff,
+                    sequence: RBF,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -659,7 +660,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid, vout: 0 },
-                    sequence: 0xffffffff,
+                    sequence: RBF,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -700,7 +701,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
-                    sequence: 0xffffffff,
+                    sequence: RBF,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -721,7 +722,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid, vout: 0 },
-                    sequence: 0xffffffff,
+                    sequence: RBF,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -781,7 +782,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid: sha256d::Hash::default(), vout: 0 },
-                    sequence: 0xffffffff,
+                    sequence: RBF,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
@@ -801,7 +802,7 @@ mod test {
             input: vec![
                 TxIn {
                     previous_output: OutPoint { txid, vout: 0 },
-                    sequence: 0xffffffff,
+                    sequence: RBF,
                     witness: Vec::new(),
                     script_sig: Script::new(),
                 }
