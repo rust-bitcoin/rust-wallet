@@ -339,9 +339,11 @@ impl Account {
     }
 
     fn instantiate_more (&mut self) -> Result<&InstantiatedKey, WalletError> {
-        let instantiated = InstantiatedKey::new_from_extended_key(self.address_type, self.network,
-                                                                  self.instantiated.len() as u32,
-                                                                  &self.master_public, self.context.clone())?;
+        let index = self.instantiated.len() as u32;
+        let instantiated = InstantiatedKey::new(self.address_type, self.network,
+                                                self.compute_base_public_key(index)?,
+                                                None, index, None, None, self.context.clone())?;
+
         let len = self.instantiated.len();
         self.instantiated.push(instantiated);
         Ok(&self.instantiated[len])
@@ -349,10 +351,18 @@ impl Account {
 
     /// create a new key
     pub fn next_key(&mut self) -> Result<&InstantiatedKey, WalletError> {
+        match self.address_type {
+            AccountAddressType::P2WSH(_) => return Err(WalletError::Unsupported("next_key can not be used for P2WSH accounts")),
+            _ => {}
+        }
         self.instantiate_more()?;
         let key = &self.instantiated[self.next as usize];
         self.next += 1;
         Ok(&key)
+    }
+
+    pub fn compute_base_public_key(&self, kix: u32) -> Result<PublicKey, WalletError> {
+        Ok(self.context.public_child(&self.master_public, ChildNumber::Normal {index: kix})?.public_key)
     }
 
     /// get a previously instantiated key
@@ -477,10 +487,6 @@ pub struct InstantiatedKey {
 
 
 impl InstantiatedKey {
-    pub fn new_from_extended_key(address_type: AccountAddressType, network: Network, index: u32, ek: &ExtendedPubKey, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError> {
-        return Self::new(address_type, network, context.public_child(&ek, ChildNumber::Normal {index})?.public_key, None, index, None, None, context);
-    }
-
     pub fn new(address_type: AccountAddressType, network: Network, mut public: PublicKey, tweak: Option<&[u8]>, index: u32, script_code: Option<Script>, csv: Option<u16>, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError> {
         if let Some(tweak) = tweak {
             context.tweak_exp_add(&mut public, tweak)?;
@@ -743,22 +749,20 @@ mod test {
 
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
         let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
-        let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
-        master.add_account(account);
-        let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 1, 0, 0).unwrap();
+        let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
 
         let ctx = Arc::new(SecpContext::new());
 
         let mut pk;
         {
-            let base_account = master.get_mut((0, 0)).unwrap();
-            pk = base_account.next_key().unwrap().public;
+            let account = master.get_mut((0, 0)).unwrap();
+            pk = account.compute_base_public_key(0).unwrap();
         }
         ctx.tweak_exp_add(&mut pk, &[0x01; 32]).unwrap();
 
         {
-            let account = master.get_mut((1, 0)).unwrap();
+            let account = master.get_mut((0, 0)).unwrap();
             let script_code = Builder::new()
                 .push_slice(pk.to_bytes().as_slice())
                 .push_opcode(all::OP_CHECKSIG)
@@ -767,9 +771,8 @@ mod test {
         }
 
 
-        let base_account = master.get((0, 0)).unwrap();
         let account = master.get((0,0)).unwrap();
-        let source = base_account.get_key(0).unwrap().address.clone();
+        let source = account.get_key(0).unwrap().address.clone();
         let target = account.get_key(0).unwrap().address.clone();
         let input_transaction = Transaction {
             input: vec![
