@@ -147,7 +147,7 @@ impl MasterAccount {
 pub struct Unlocker {
     master_private: ExtendedPrivKey,
     network: Network,
-    context: SecpContext,
+    context: Arc<SecpContext>,
     cached: HashMap<AccountAddressType,
         (ExtendedPrivKey, HashMap<u32,
             (ExtendedPrivKey, HashMap<u32,
@@ -159,7 +159,7 @@ impl Unlocker {
     /// check result if master_public is provided
     pub fn new (encrypted: &[u8], passphrase: &str, pd_passphrase: Option<&str>, network: Network, master_public: Option<&ExtendedPubKey>) -> Result<Unlocker, WalletError>{
         let mnemonic = Mnemonic::decrypt (encrypted, passphrase)?;
-        let context = SecpContext::new();
+        let context = Arc::new(SecpContext::new());
         let master_private = context.master_private_key(network, &Seed::new(&mnemonic, pd_passphrase))?;
         if let Some(master_public) = master_public {
             if network != master_public.network {
@@ -202,6 +202,10 @@ impl Unlocker {
             self.context.tweak_add(&mut key, tweak.as_slice())?;
         }
         Ok(key)
+    }
+
+    pub fn context(&self) -> Arc<SecpContext> {
+        self.context.clone()
     }
 }
 
