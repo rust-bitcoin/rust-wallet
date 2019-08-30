@@ -100,6 +100,18 @@ impl Coins {
         &self.proofs
     }
 
+    pub fn available_balance<H>(&self, height: u32, block_height: H) -> u64
+        where H: Fn(&sha256d::Hash) -> Option<u32> {
+        self.confirmed.iter().filter(|(p, c)| {
+            if let Some(csv) = c.derivation.csv {
+                let confirmed = self.proofs.get(&p.txid).expect("confirmed coin without proof");
+                let conf_height = block_height(confirmed.get_block_hash()).expect("proof not on trunk");
+                return height >= conf_height + csv as u32;
+            }
+            false
+        }).map(|(_, c)| c.output.value).sum::<u64> ()
+    }
+
     pub fn confirmed_balance(&self) -> u64 {
         self.confirmed.values().map(|c| c.output.value).sum::<u64>()
     }
