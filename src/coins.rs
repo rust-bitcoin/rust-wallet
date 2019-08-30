@@ -159,24 +159,28 @@ impl Coins {
     }
 
     /// get random confirmed coins of sufficient amount
-    pub fn get_confirmed_coins<H> (&self,  minimum: u64, height: u32, block_height: H) -> Vec<(OutPoint, Coin)>
+    /// returns a vector of spent outpoins, coins and their confirmation height
+    pub fn get_confirmed_coins<H> (&self,  minimum: u64, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
         where H: Fn(&sha256d::Hash) -> Option<u32> {
         use rand::prelude::SliceRandom;
         // TODO: knapsack
         let mut sum = 0u64;
         let mut have = self.confirmed.iter()
-            .filter( |(p,c)| {
+            .filter_map( |(p,c)| {
+                let proof = self.proofs.get(&p.txid).expect("missing proof of confirmed transaction");
+                let h = block_height(proof.get_block_hash()).expect("coin not confirmed");
                 if let Some(csv) = c.derivation.csv {
-                    let proof = self.proofs.get(&p.txid).expect("missing proof of confirmed transaction");
-                    return block_height(proof.get_block_hash()).expect("coin not confirmed") + (csv as u32) <= height;
+                    if h + (csv as u32) < height {
+                        return None;
+                    }
                 }
-                return true;
+                return Some(((*p).clone(), (*c).clone(), h));
             }).collect::<Vec<_>>();
-        have.sort_by(|(_, a), (_, b)| a.output.value.cmp(&b.output.value));
+        have.sort_by(|(_, a,_), (_, b,_)| a.output.value.cmp(&b.output.value));
         let mut inputs = Vec::new();
-        for (point, coin) in have.iter() {
+        for (point, coin,height) in have.iter() {
             sum += coin.output.value;
-            inputs.push(((**point).clone(), (**coin).clone()));
+            inputs.push(((*point).clone(), (*coin).clone(), *height));
             if sum >= minimum {
                 break;
             }
@@ -184,7 +188,7 @@ impl Coins {
         if sum > minimum {
             let mut change = sum - minimum;
             // drop some if possible
-            while let Some(index) = inputs.iter().enumerate().find_map(|(i, (_, c))| if c.output.value <= change { Some(i) } else { None }) {
+            while let Some(index) = inputs.iter().enumerate().find_map(|(i, (_, c,_))| if c.output.value <= change { Some(i) } else { None }) {
                 let removed = inputs[index].1.output.value;
                 change -= removed;
                 inputs.remove(index);
