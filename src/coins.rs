@@ -102,14 +102,26 @@ impl Coins {
 
     pub fn available_balance<H>(&self, height: u32, block_height: H) -> u64
         where H: Fn(&sha256d::Hash) -> Option<u32> {
-        self.confirmed.iter().filter(|(p, c)| {
+        self.available_coins(height, block_height).iter().map(|(_, c,_)| c.output.value).sum::<u64> ()
+    }
+
+    pub fn available_coins<H>(&self, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
+        where H: Fn(&sha256d::Hash) -> Option<u32> {
+        self.confirmed.iter().filter_map(|(p, c)| {
+            let confirmed = self.proofs.get(&p.txid).expect("confirmed coin without proof");
+            let conf_height = block_height(confirmed.get_block_hash()).expect("proof not on trunk");
             if let Some(csv) = c.derivation.csv {
-                let confirmed = self.proofs.get(&p.txid).expect("confirmed coin without proof");
-                let conf_height = block_height(confirmed.get_block_hash()).expect("proof not on trunk");
-                return height >= conf_height + csv as u32;
+                if height >= conf_height + csv as u32 {
+                    return Some(((*p).clone(), (*c).clone(), conf_height))
+                }
+                else {
+                    None
+                }
             }
-            true
-        }).map(|(_, c)| c.output.value).sum::<u64> ()
+            else {
+                return Some(((*p).clone(), (*c).clone(), conf_height))
+            }
+        }).collect()
     }
 
     pub fn confirmed_balance(&self) -> u64 {
@@ -172,22 +184,12 @@ impl Coins {
 
     /// get random confirmed coins of sufficient amount
     /// returns a vector of spent outpoins, coins and their confirmation height
-    pub fn get_confirmed_coins<H> (&self,  minimum: u64, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
+    pub fn compile_inputs<H> (&self, minimum: u64, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
         where H: Fn(&sha256d::Hash) -> Option<u32> {
         use rand::prelude::SliceRandom;
         // TODO: knapsack
         let mut sum = 0u64;
-        let mut have = self.confirmed.iter()
-            .filter_map( |(p,c)| {
-                let proof = self.proofs.get(&p.txid).expect("missing proof of confirmed transaction");
-                let h = block_height(proof.get_block_hash()).expect("coin not confirmed");
-                if let Some(csv) = c.derivation.csv {
-                    if h + (csv as u32) < height {
-                        return None;
-                    }
-                }
-                return Some(((*p).clone(), (*c).clone(), h));
-            }).collect::<Vec<_>>();
+        let mut have = self.available_coins(height, block_height);
         have.sort_by(|(_, a,_), (_, b,_)| a.output.value.cmp(&b.output.value));
         let mut inputs = Vec::new();
         for (point, coin,height) in have.iter() {
