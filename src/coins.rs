@@ -108,7 +108,7 @@ impl Coins {
                 let conf_height = block_height(confirmed.get_block_hash()).expect("proof not on trunk");
                 return height >= conf_height + csv as u32;
             }
-            false
+            true
         }).map(|(_, c)| c.output.value).sum::<u64> ()
     }
 
