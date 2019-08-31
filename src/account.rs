@@ -340,16 +340,37 @@ impl Account {
         let need = max(seen + self.look_ahead, have) - have;
         let mut new = Vec::new();
         for i in 0..need {
-            new.push((have + i, self.instantiate_more()?.script_pubkey.clone()));
+            new.push((have + i, self.instantiate_more()?.address.script_pubkey().clone()));
         }
         Ok(new)
     }
 
     fn instantiate_more (&mut self) -> Result<&InstantiatedKey, WalletError> {
-        let index = self.instantiated.len() as u32;
+        let kix = self.instantiated.len() as u32;
+
+        let scripter = |public: &PublicKey,_| {
+            match self.address_type {
+                AccountAddressType::P2SHWPKH => Builder::new()
+                    .push_opcode(all::OP_DUP)
+                    .push_opcode(all::OP_HASH160)
+                    .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
+                    .push_opcode(all::OP_EQUALVERIFY)
+                    .push_opcode(all::OP_CHECKSIG)
+                    .into_script(),
+                AccountAddressType::P2WPKH =>
+                    Builder::new()
+                        .push_opcode(all::OP_DUP)
+                        .push_opcode(all::OP_HASH160)
+                        .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
+                        .push_opcode(all::OP_EQUALVERIFY)
+                        .push_opcode(all::OP_CHECKSIG)
+                        .into_script(),
+                _ => Script::new(),
+            }
+        };
         let instantiated = InstantiatedKey::new(self.address_type, self.network,
-                                                self.compute_base_public_key(index)?,
-                                                None, index, None, None, self.context.clone())?;
+                                                &self.master_public,
+                                                None, kix, scripter, None, self.context.clone())?;
 
         let len = self.instantiated.len();
         self.instantiated.push(instantiated);
@@ -377,16 +398,17 @@ impl Account {
         self.instantiated.get(kix as usize)
     }
 
-    pub fn add_script_key(&mut self, pk: PublicKey, script_code: Script, tweak: Option<&[u8]>, csv: Option<u16>) -> Result<u32, WalletError> {
+    pub fn add_script_key<W>(&mut self, scripter: W, tweak: Option<&[u8]>, csv: Option<u16>) -> Result<u32, WalletError>
+        where W: FnOnce(&PublicKey, Option<u16>) -> Script {
         match self.address_type {
             AccountAddressType::P2WSH(_) => {}
             _ => return Err(WalletError::Unsupported("add_script_key can only be used for P2WSH accounts"))
         }
-        let index = self.instantiated.len() as u32;
-        let instantiated = InstantiatedKey::new(self.address_type, self.network, pk,
-                                                tweak, index, Some(script_code), csv, self.context.clone())?;
+        let kix = self.instantiated.len() as u32;
+        let instantiated = InstantiatedKey::new(self.address_type, self.network, &self.master_public,
+                                                tweak, kix, scripter, csv, self.context.clone())?;
         self.instantiated.push(instantiated);
-        Ok((self.instantiated.len() - 1) as u32)
+        Ok(kix)
     }
 
     pub fn used(&self) -> usize {
@@ -395,7 +417,7 @@ impl Account {
 
     // get all pubkey scripts of this account
     pub fn get_scripts<'a>(&'a self) -> impl Iterator<Item=(u32, Script, Option<Vec<u8>>, Option<u16>)> + 'a {
-        self.instantiated.iter().enumerate().map(|(kix, i)| (kix as u32, i.script_pubkey.clone(), i.tweak.clone(), i.csv.clone()))
+        self.instantiated.iter().enumerate().map(|(kix, i)| (kix as u32, i.address.script_pubkey().clone(), i.tweak.clone(), i.csv.clone()))
     }
 
     /// sign a transaction with keys in this account works for types except P2WSH
@@ -406,9 +428,9 @@ impl Account {
         let mut bip143hasher: Option<bip143::SighashComponents> = None;
         for (ix, input) in transaction.input.iter_mut().enumerate() {
             if let Some(spend) = resolver(&input.previous_output) {
-                if let Some(instantiated) =
-                self.instantiated.iter().find(|i| i.script_pubkey == spend.script_pubkey) {
-                    let pk = unlocker.unlock(self.address_type, self.account_number, self.sub_account_number, instantiated.index, instantiated.tweak.clone())?;
+                if let Some((kix, instantiated)) =
+                self.instantiated.iter().enumerate().find(|(_, i)| i.address.script_pubkey() == spend.script_pubkey) {
+                    let pk = unlocker.unlock(self.address_type, self.account_number, self.sub_account_number, kix as u32, instantiated.tweak.clone())?;
                     match self.address_type {
                         AccountAddressType::P2PKH => {
                             let sighash = txclone.signature_hash(ix, &instantiated.address.script_pubkey(), hash_type.as_u32());
@@ -483,51 +505,29 @@ impl Account {
 /// instantiated key of an account
 #[derive(Clone, Serialize, Deserialize)]
 pub struct InstantiatedKey {
-    pub index: u32,
     pub public: PublicKey,
     pub script_code: Script,
     pub address: Address,
-    pub script_pubkey: Script,
     pub tweak: Option<Vec<u8>>,
     pub csv: Option<u16>
 }
 
 
 impl InstantiatedKey {
-    pub fn new(address_type: AccountAddressType, network: Network, mut public: PublicKey, tweak: Option<&[u8]>, index: u32, script_code: Option<Script>, csv: Option<u16>, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError> {
+    pub fn new<W>(address_type: AccountAddressType, network: Network, master: &ExtendedPubKey, tweak: Option<&[u8]>, kix: u32, scripter: W, csv: Option<u16>, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError>
+        where W: FnOnce(&PublicKey, Option<u16>) -> Script {
+        let mut public = context.public_child(master, ChildNumber::Normal{index:kix})?.public_key;
         if let Some(tweak) = tweak {
             context.tweak_exp_add(&mut public, tweak)?;
         }
-        let (script_code, address) = match address_type {
-            AccountAddressType::P2PKH => (Script::new(), Address::p2pkh(&public, network)),
-            AccountAddressType::P2SHWPKH => (
-                Builder::new()
-                    .push_opcode(all::OP_DUP)
-                    .push_opcode(all::OP_HASH160)
-                    .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
-                    .push_opcode(all::OP_EQUALVERIFY)
-                    .push_opcode(all::OP_CHECKSIG)
-                    .into_script(),
-                Address::p2shwpkh(&public, network)),
-            AccountAddressType::P2WPKH => (
-                Builder::new()
-                    .push_opcode(all::OP_DUP)
-                    .push_opcode(all::OP_HASH160)
-                    .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
-                    .push_opcode(all::OP_EQUALVERIFY)
-                    .push_opcode(all::OP_CHECKSIG)
-                    .into_script(),
-                Address::p2wpkh(&public, network)),
-            AccountAddressType::P2WSH(_) => {
-                if let Some(ref script_code) = script_code {
-                    (script_code.clone(), Address::p2wsh(script_code, network))
-                } else {
-                    return Err(WalletError::Unsupported("need script_code for P2WSH address"));
-                }
-            }
+        let script_code = scripter(&public, csv);
+        let address = match address_type {
+            AccountAddressType::P2PKH => Address::p2pkh(&public, network),
+            AccountAddressType::P2SHWPKH => Address::p2shwpkh(&public, network),
+            AccountAddressType::P2WPKH => Address::p2wpkh(&public, network),
+            AccountAddressType::P2WSH(_) => Address::p2wsh(&script_code, network),
         };
-        let script_pubkey = address.script_pubkey();
-        Ok(InstantiatedKey { index, public, script_code, address, script_pubkey, tweak: tweak.map(|t|t.to_vec()), csv })
+        Ok(InstantiatedKey { public, script_code, address, tweak: tweak.map(|t|t.to_vec()), csv })
     }
 }
 
@@ -760,24 +760,14 @@ mod test {
         let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
 
-        let ctx = Arc::new(SecpContext::new());
-
-        let mut pk;
         {
             let account = master.get_mut((0, 0)).unwrap();
-            pk = account.compute_base_public_key(0).unwrap();
-        }
-        ctx.tweak_exp_add(&mut pk, &[0x01; 32]).unwrap();
-
-        {
-            let account = master.get_mut((0, 0)).unwrap();
-            let script_code = Builder::new()
+            let scripter = |pk: &PublicKey, _| Builder::new()
                 .push_slice(pk.to_bytes().as_slice())
                 .push_opcode(all::OP_CHECKSIG)
                 .into_script();
-            account.add_script_key(pk, script_code, Some(&[0x01; 32]), None).unwrap();
+            account.add_script_key(scripter, Some(&[0x01; 32]), None).unwrap();
         }
-
 
         let account = master.get((0,0)).unwrap();
         let source = account.get_key(0).unwrap().address.clone();
@@ -843,25 +833,16 @@ mod test {
         let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
 
-        let ctx = Arc::new(SecpContext::new());
-
-        let mut pk;
         {
             let account = master.get_mut((0, 0)).unwrap();
-            pk = account.compute_base_public_key(0).unwrap();
-        }
-        ctx.tweak_exp_add(&mut pk, &[0x01; 32]).unwrap();
-
-        {
-            let account = master.get_mut((0, 0)).unwrap();
-            let script_code = Builder::new()
-                .push_int(CSV as i64)
+            let scripter = |pk: &PublicKey, csv: Option<u16>| Builder::new()
+                .push_int(csv.unwrap() as i64)
                 .push_opcode(all::OP_CSV)
                 .push_opcode(all::OP_DROP)
                 .push_slice(pk.to_bytes().as_slice())
                 .push_opcode(all::OP_CHECKSIG)
                 .into_script();
-            account.add_script_key(pk, script_code, Some(&[0x01; 32]), Some(10)).unwrap();
+            account.add_script_key(scripter, Some(&[0x01; 32]), Some(CSV)).unwrap();
         }
 
 
