@@ -184,7 +184,7 @@ impl Coins {
 
     /// get random confirmed coins of sufficient amount
     /// returns a vector of spent outpoins, coins and their confirmation height
-    pub fn compile_inputs<H> (&self, minimum: u64, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
+    pub fn choose_inputs<H> (&self, minimum: u64, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
         where H: Fn(&sha256d::Hash) -> Option<u32> {
         use rand::prelude::SliceRandom;
         // TODO: knapsack
