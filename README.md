@@ -82,6 +82,8 @@ let input_transaction = Transaction {
 
 let txid = input_transaction.txid();
 
+const RBF: u32 = 0xffffffff - 2;
+
 // a dummy transaction that spends source
 let mut spending_transaction = Transaction {
             input: vec![
@@ -122,6 +124,8 @@ spending_transaction.verify(|point|
 ```
 ## Advanced Accounts Use
 ```
+const CSV:u16 = 10; // 10 blocks relative lock
+
 // create a P2WSH (pay-to-witness-script-hash) (native segwit for arbitrary scripts) account
 let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 2, 0, 0).unwrap();
 master.add_account(account);

@@ -28,7 +28,7 @@ use bitcoin::{Address, blockdata::{
 use bitcoin_hashes::{Hash, hash160};
 
 use context::SecpContext;
-use error::WalletError;
+use error::Error;
 use bitcoin::util::bip32::ExtendedPubKey;
 use crate::mnemonic::Mnemonic;
 use rand::{thread_rng, RngCore};
@@ -58,7 +58,7 @@ impl MasterAccount {
     /// create a new random master account
     /// the information that leads to private key is stored encrypted with passphrase
     /// and the optional pd_passphrase (pd for plausible deniability)
-    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, WalletError> {
+    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, Error> {
         let context = SecpContext::new();
         let mut random = vec!(0u8; entropy as usize);
         let mut rng = thread_rng();
@@ -84,7 +84,7 @@ impl MasterAccount {
     }
 
     /// Restore from mnemonic
-    pub fn from_mnemonic(mnemonic: &Mnemonic, birth: u64, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, WalletError> {
+    pub fn from_mnemonic(mnemonic: &Mnemonic, birth: u64, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, Error> {
         let context = SecpContext::new();
         let encrypted = mnemonic.encrypt(passphrase)?;
         let seed = Seed::new(&mnemonic, pd_passphrase);
@@ -94,7 +94,7 @@ impl MasterAccount {
     }
 
     /// get the mnemonic (human readable) representation of the master key
-    pub fn mnemonic (&self, passphrase: &str) -> Result<Mnemonic, WalletError> {
+    pub fn mnemonic (&self, passphrase: &str) -> Result<Mnemonic, Error> {
         Ok(Mnemonic::decrypt(&self.encrypted, passphrase)?)
     }
 
@@ -133,7 +133,7 @@ impl MasterAccount {
         self.accounts.insert((account.account_number, account.sub_account_number), account);
     }
 
-    pub fn sign<R>(&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: &R, unlocker: &mut Unlocker) -> Result<usize, WalletError>
+    pub fn sign<R>(&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: &R, unlocker: &mut Unlocker) -> Result<usize, Error>
         where R: Fn(&OutPoint) -> Option<TxOut> {
         let mut n_signatures = 0;
         for (_, a) in self.accounts.iter() {
@@ -157,22 +157,22 @@ pub struct Unlocker {
 impl Unlocker {
     /// decrypt encrypted seed of a master account
     /// check result if master_public is provided
-    pub fn new (encrypted: &[u8], passphrase: &str, pd_passphrase: Option<&str>, network: Network, master_public: Option<&ExtendedPubKey>) -> Result<Unlocker, WalletError>{
+    pub fn new (encrypted: &[u8], passphrase: &str, pd_passphrase: Option<&str>, network: Network, master_public: Option<&ExtendedPubKey>) -> Result<Unlocker, Error>{
         let mnemonic = Mnemonic::decrypt (encrypted, passphrase)?;
         let context = Arc::new(SecpContext::new());
         let master_private = context.master_private_key(network, &Seed::new(&mnemonic, pd_passphrase))?;
         if let Some(master_public) = master_public {
             if network != master_public.network {
-                return Err(WalletError::Network);
+                return Err(Error::Network);
             }
             if context.extended_public_from_private(&master_private) != *master_public {
-                return Err(WalletError::Passphrase);
+                return Err(Error::Passphrase);
             }
         }
         Ok(Unlocker{master_private, network, context, cached: HashMap::new()})
     }
 
-    pub fn new_for_master(master: &MasterAccount, passphrase: &str, pd_passphrase: Option<&str>) -> Result<Unlocker, WalletError> {
+    pub fn new_for_master(master: &MasterAccount, passphrase: &str, pd_passphrase: Option<&str>) -> Result<Unlocker, Error> {
         Self::new(master.encrypted(), passphrase, pd_passphrase, master.master_public.network, Some(&master.master_public))
     }
 
@@ -180,7 +180,7 @@ impl Unlocker {
         &self.master_private
     }
 
-    pub fn sub_account_key(&mut self, address_type: AccountAddressType, account: u32, sub_account: u32) -> Result<ExtendedPrivKey, WalletError> {
+    pub fn sub_account_key(&mut self, address_type: AccountAddressType, account: u32, sub_account: u32) -> Result<ExtendedPrivKey, Error> {
         let by_purpose = self.cached.entry(address_type).or_insert(
             (
                 self.context.private_child(&self.master_private, ChildNumber::Hardened { index: address_type.as_u32() })?
@@ -199,7 +199,7 @@ impl Unlocker {
         Ok(self.context.private_child(&by_account.0, ChildNumber::Normal { index: sub_account })?)
     }
 
-    pub fn unlock (&mut self, address_type: AccountAddressType, account: u32, sub_account: u32, index: u32, tweak: Option<Vec<u8>>) -> Result<PrivateKey, WalletError> {
+    pub fn unlock (&mut self, address_type: AccountAddressType, account: u32, sub_account: u32, index: u32, tweak: Option<Vec<u8>>) -> Result<PrivateKey, Error> {
         let sub_account_key = self.sub_account_key(address_type, account, sub_account)?;
         let mut key = self.context.private_child(&sub_account_key, ChildNumber::Normal { index })?.private_key;
         if let Some(tweak) = tweak {
@@ -278,7 +278,7 @@ pub struct Account {
 }
 
 impl Account {
-    pub fn new (unlocker: &mut Unlocker, address_type: AccountAddressType, account_number: u32, sub_account_number: u32, look_ahead: u32) -> Result<Account, WalletError> {
+    pub fn new (unlocker: &mut Unlocker, address_type: AccountAddressType, account_number: u32, sub_account_number: u32, look_ahead: u32) -> Result<Account, Error> {
         let context = Arc::new(SecpContext::new());
         let master_private = unlocker.sub_account_key(address_type, account_number, sub_account_number)?;
         let pubic_key = context.extended_public_from_private(&master_private);
@@ -332,7 +332,7 @@ impl Account {
     }
 
     /// look ahead from last seen
-    pub fn do_look_ahead(&mut self, seen: Option<u32>) -> Result<Vec<(u32, Script)>, WalletError> {
+    pub fn do_look_ahead(&mut self, seen: Option<u32>) -> Result<Vec<(u32, Script)>, Error> {
         use std::cmp::max;
 
         if let Some(seen) = seen {
@@ -349,7 +349,7 @@ impl Account {
         Ok(new)
     }
 
-    fn instantiate_more (&mut self) -> Result<&InstantiatedKey, WalletError> {
+    fn instantiate_more (&mut self) -> Result<&InstantiatedKey, Error> {
         let kix = self.instantiated.len() as u32;
 
         let scripter = |public: &PublicKey,_| {
@@ -382,9 +382,9 @@ impl Account {
     }
 
     /// create a new key
-    pub fn next_key(&mut self) -> Result<&InstantiatedKey, WalletError> {
+    pub fn next_key(&mut self) -> Result<&InstantiatedKey, Error> {
         match self.address_type {
-            AccountAddressType::P2WSH(_) => return Err(WalletError::Unsupported("next_key can not be used for P2WSH accounts")),
+            AccountAddressType::P2WSH(_) => return Err(Error::Unsupported("next_key can not be used for P2WSH accounts")),
             _ => {}
         }
         self.instantiate_more()?;
@@ -393,7 +393,7 @@ impl Account {
         Ok(&key)
     }
 
-    pub fn compute_base_public_key(&self, kix: u32) -> Result<PublicKey, WalletError> {
+    pub fn compute_base_public_key(&self, kix: u32) -> Result<PublicKey, Error> {
         Ok(self.context.public_child(&self.master_public, ChildNumber::Normal {index: kix})?.public_key)
     }
 
@@ -402,11 +402,11 @@ impl Account {
         self.instantiated.get(kix as usize)
     }
 
-    pub fn add_script_key<W>(&mut self, scripter: W, tweak: Option<&[u8]>, csv: Option<u16>) -> Result<u32, WalletError>
+    pub fn add_script_key<W>(&mut self, scripter: W, tweak: Option<&[u8]>, csv: Option<u16>) -> Result<u32, Error>
         where W: FnOnce(&PublicKey, Option<u16>) -> Script {
         match self.address_type {
             AccountAddressType::P2WSH(_) => {}
-            _ => return Err(WalletError::Unsupported("add_script_key can only be used for P2WSH accounts"))
+            _ => return Err(Error::Unsupported("add_script_key can only be used for P2WSH accounts"))
         }
         let kix = self.instantiated.len() as u32;
         let instantiated = InstantiatedKey::new(self.address_type, self.network, &self.master_public,
@@ -425,7 +425,7 @@ impl Account {
     }
 
     /// sign a transaction with keys in this account works for types except P2WSH
-    pub fn sign<R>(&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R, unlocker: &mut Unlocker) -> Result<usize, WalletError>
+    pub fn sign<R>(&self, transaction: &mut Transaction, hash_type: SigHashType, resolver: R, unlocker: &mut Unlocker) -> Result<usize, Error>
         where R: Fn(&OutPoint) -> Option<TxOut> {
         let mut signed = 0;
         let txclone = transaction.clone();
@@ -449,7 +449,7 @@ impl Account {
                         }
                         AccountAddressType::P2WPKH => {
                             if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
+                                return Err(Error::Unsupported("can only sig all inputs for now"));
                             }
                             input.script_sig = Script::new();
                             let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
@@ -465,7 +465,7 @@ impl Account {
                         }
                         AccountAddressType::P2SHWPKH => {
                             if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
+                                return Err(Error::Unsupported("can only sig all inputs for now"));
                             }
                             input.script_sig = Builder::new().push_slice(&Builder::new()
                                 .push_int(0)
@@ -484,7 +484,7 @@ impl Account {
                         }
                         AccountAddressType::P2WSH(_) => {
                             if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(WalletError::Unsupported("can only sig all inputs for now"));
+                                return Err(Error::Unsupported("can only sig all inputs for now"));
                             }
                             input.script_sig = Script::new();
                             let hasher = bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
@@ -518,7 +518,7 @@ pub struct InstantiatedKey {
 
 
 impl InstantiatedKey {
-    pub fn new<W>(address_type: AccountAddressType, network: Network, master: &ExtendedPubKey, tweak: Option<&[u8]>, kix: u32, scripter: W, csv: Option<u16>, context: Arc<SecpContext>) -> Result<InstantiatedKey, WalletError>
+    pub fn new<W>(address_type: AccountAddressType, network: Network, master: &ExtendedPubKey, tweak: Option<&[u8]>, kix: u32, scripter: W, csv: Option<u16>, context: Arc<SecpContext>) -> Result<InstantiatedKey, Error>
         where W: FnOnce(&PublicKey, Option<u16>) -> Script {
         let mut public = context.public_child(master, ChildNumber::Normal{index:kix})?.public_key;
         if let Some(tweak) = tweak {

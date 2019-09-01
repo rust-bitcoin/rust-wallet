@@ -18,7 +18,7 @@
 //!
 //! TREZOR compatible mnemonic in english
 //!
-use error::WalletError;
+use error::Error;
 use crypto::sha2::Sha256;
 use crypto::digest::Digest;
 use crypto::aes;
@@ -38,7 +38,7 @@ impl ToString for Mnemonic {
 impl Mnemonic {
     /// create a mnemonic for encrypted data
     /// decryption algorithm: AES256(Sha256(passphrase), ECB, PKCS padding
-    pub fn decrypt (encrypted: &[u8], passphrase: &str) -> Result<Mnemonic, WalletError> {
+    pub fn decrypt (encrypted: &[u8], passphrase: &str) -> Result<Mnemonic, Error> {
         let mut key = [0u8; 32];
         let mut sha2 = Sha256::new();
         sha2.input(passphrase.as_bytes());
@@ -58,12 +58,12 @@ impl Mnemonic {
             }
         }
 
-        Ok(Mnemonic::from_str(String::from_utf8(decrypted).map_err(|_| WalletError::Passphrase)?.as_str())?)
+        Ok(Mnemonic::from_str(String::from_utf8(decrypted).map_err(|_| Error::Passphrase)?.as_str())?)
     }
 
     /// encrypt mnemonic
     /// encryption algorithm: AES256(Sha256(passphrase), ECB, PKCS padding
-    pub fn encrypt(&self, passphrase: &str) -> Result<Vec<u8>, WalletError> {
+    pub fn encrypt(&self, passphrase: &str) -> Result<Vec<u8>, Error> {
         let mut key = [0u8; 32];
         let mut sha2 = Sha256::new();
         sha2.input(passphrase.as_bytes());
@@ -90,10 +90,10 @@ impl Mnemonic {
         self.0.iter().map(|s| *s)
     }
 
-    pub fn from_str(s : &str) -> Result<Mnemonic, WalletError> {
+    pub fn from_str(s : &str) -> Result<Mnemonic, Error> {
         let words : Vec<_> = s.split(' ').collect();
         if words.len () < 6 || words.len() % 6 != 0 {
-            return Err(WalletError::Mnemonic("Mnemonic must have a word count divisible with 6"));
+            return Err(Error::Mnemonic("Mnemonic must have a word count divisible with 6"));
         }
         let mut mnemonic = Vec::new();
         for word in &words {
@@ -101,16 +101,16 @@ impl Mnemonic {
                 mnemonic.push(WORDS[idx]);
             }
             else {
-                return Err(WalletError::Mnemonic("Mnemonic contains an unknown word"));
+                return Err(Error::Mnemonic("Mnemonic contains an unknown word"));
             }
         }
         Ok(Mnemonic(mnemonic))
     }
 
     /// create a mnemonic for some data
-    pub fn new (data: &[u8]) -> Result<Mnemonic, WalletError> {
+    pub fn new (data: &[u8]) -> Result<Mnemonic, Error> {
         if data.len() % 4 != 0 {
-            return Err(WalletError::Mnemonic("Data for mnemonic should have a length divisible by 4"));
+            return Err(Error::Mnemonic("Data for mnemonic should have a length divisible by 4"));
         }
         let mut check = [0u8; 32];
 

@@ -22,7 +22,7 @@ use bitcoin::{
 };
 use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
 use secp256k1::{All,Secp256k1, Message, Signature};
-use error::WalletError;
+use error::Error;
 use account::Seed;
 
 pub struct SecpContext {
@@ -37,7 +37,7 @@ impl SecpContext {
     }
 
     /// create a master private key from seed
-    pub fn master_private_key(&self, network: Network, seed: &Seed) -> Result<ExtendedPrivKey, WalletError> {
+    pub fn master_private_key(&self, network: Network, seed: &Seed) -> Result<ExtendedPrivKey, Error> {
         Ok(ExtendedPrivKey::new_master (network, &seed.0)?)
     }
 
@@ -46,11 +46,11 @@ impl SecpContext {
         ExtendedPubKey::from_private(&self.secp, extended_private_key)
     }
 
-    pub fn private_child (&self, extended_private_key: &ExtendedPrivKey, child: ChildNumber) -> Result<ExtendedPrivKey, WalletError> {
+    pub fn private_child (&self, extended_private_key: &ExtendedPrivKey, child: ChildNumber) -> Result<ExtendedPrivKey, Error> {
         Ok(extended_private_key.ckd_priv(&self.secp, child)?)
     }
 
-    pub fn public_child (&self, extended_public_key: &ExtendedPubKey, child: ChildNumber) -> Result<ExtendedPubKey, WalletError> {
+    pub fn public_child (&self, extended_public_key: &ExtendedPubKey, child: ChildNumber) -> Result<ExtendedPubKey, Error> {
         Ok(extended_public_key.ckd_pub(&self.secp, child)?)
     }
 
@@ -58,16 +58,16 @@ impl SecpContext {
         PublicKey::from_private_key(&self.secp, private)
     }
 
-    pub fn sign(&self, digest: &[u8], key: &PrivateKey) -> Result<Signature, WalletError>{
+    pub fn sign(&self, digest: &[u8], key: &PrivateKey) -> Result<Signature, Error>{
         Ok(self.secp.sign(&Message::from_slice(digest)?, &key.key))
     }
 
-    pub fn tweak_add(&self, key: &mut PrivateKey, tweak: &[u8]) -> Result<(), WalletError> {
+    pub fn tweak_add(&self, key: &mut PrivateKey, tweak: &[u8]) -> Result<(), Error> {
         key.key.add_assign(tweak)?;
         Ok(())
     }
 
-    pub fn tweak_exp_add(&self, key: &mut PublicKey, tweak: &[u8]) -> Result<(), WalletError> {
+    pub fn tweak_exp_add(&self, key: &mut PublicKey, tweak: &[u8]) -> Result<(), Error> {
         key.key.add_exp_assign(&self.secp, tweak)?;
         Ok(())
     }
