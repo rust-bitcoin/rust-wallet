@@ -29,7 +29,7 @@ let mut master = MasterAccount::from_encrypted(
 // The master accounts only store public keys
 // Private keys are created on-demand with an Unlocker and forgotten as soon as possible
 
-// create an unlocker that is able to decrypt the encripted mnemonic and then calculate private keys
+// create an unlocker that is able to decrypt the encrypted mnemonic and then calculate private keys
 let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
 
 // The unlocker is needed to create accounts within the master account as 
@@ -37,7 +37,7 @@ let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
 
 // create a P2PKH (pay-to-public-key-hash) (legacy) account. 
 // account number 0, sub-account 0 (which usually means receiver) BIP32 look-ahead 10
-let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
+let account = Account::new(&mut unlocker, AccountAddressType::P2PKH, 0, 0, 10).unwrap();
 master.add_account(account);
 
 // create a P2SHWPKH (pay-to-script-hash-witness-public-key-hash) (transitional single key segwit) account.
