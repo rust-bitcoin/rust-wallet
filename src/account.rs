@@ -201,7 +201,7 @@ impl Unlocker {
 
     pub fn unlock (&mut self, address_type: AccountAddressType, account: u32, sub_account: u32, index: u32, tweak: Option<Vec<u8>>) -> Result<PrivateKey, WalletError> {
         let sub_account_key = self.sub_account_key(address_type, account, sub_account)?;
-        let mut key = self.context.private_child(&sub_account_key, ChildNumber::Normal { index: index })?.private_key;
+        let mut key = self.context.private_child(&sub_account_key, ChildNumber::Normal { index })?.private_key;
         if let Some(tweak) = tweak {
             self.context.tweak_add(&mut key, tweak.as_slice())?;
         }
