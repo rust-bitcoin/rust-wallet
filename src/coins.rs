@@ -211,5 +211,86 @@ impl Coins {
         inputs.shuffle(&mut thread_rng());
         inputs
     }
+}
 
+#[cfg(test)]
+mod test {
+    use bitcoin_hashes::sha256d;
+    use bitcoin::{Block, BlockHeader, Address, Transaction, TxIn, OutPoint, TxOut, util::hash::MerkleRoot, network::constants::Network, BitcoinHash};
+    use std::{
+        str::FromStr,
+        time::{SystemTime, UNIX_EPOCH}
+    };
+    use bitcoin::blockdata::script::Builder;
+    use bitcoin::util::bip32::ExtendedPubKey;
+    use account::{Unlocker, Account, AccountAddressType, MasterAccount};
+    use bitcoin::blockdata::constants::genesis_block;
+    use coins::Coins;
+
+    const NEW_COINS:u64 = 5000000000;
+
+    fn new_block (prev: &sha256d::Hash) -> Block {
+        Block {
+            header :BlockHeader {
+                version: 1,
+                time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as u32,
+                nonce: 0,
+                bits: 0x1d00ffff,
+                prev_blockhash: prev.clone(),
+                merkle_root: sha256d::Hash::default()
+            },
+            txdata: Vec::new()
+        }
+    }
+
+    fn coin_base(miner: Address, height: u32) -> Transaction {
+        Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec!(TxIn {
+                sequence: 0xffffffff,
+                witness: Vec::new(),
+                previous_output: OutPoint{ txid: sha256d::Hash::default(), vout: 0 },
+                script_sig: Builder::new().push_int(height as i64).into_script()
+            }),
+            output: vec!(TxOut{
+                value: NEW_COINS,
+                script_pubkey: miner.script_pubkey()
+            })
+        }
+    }
+
+    fn add_tx (block: &mut Block, tx: Transaction) {
+        block.txdata.push(tx);
+        block.header.merkle_root = block.merkle_root();
+    }
+
+    fn new_master() -> MasterAccount {
+        let mut master = MasterAccount::from_encrypted(
+            hex::decode("0e05ba48bb0fdc7285dc9498202aeee5e1777ac4f55072b30f15f6a8632ad0f3fde1c41d9e162dbe5d3153282eaebd081cf3b3312336fc56f5dd18a2df6ea48c1cdd11a1ed11281cd2e0f864f02e5bed5ab03326ed24e43b8a184acff9cb4e730db484e33f2b24295a97b2ca87871a69384eb64d4160ce8b3e8b4d90234040970e531d4333a8979dbe533c2b2668bf43b6607b2d24c5b42765ebfdd075fd173c").unwrap().as_slice(),
+            ExtendedPubKey::from_str("tpubD6NzVbkrYhZ4XKz4vgwBmnnVmA7EgWhnXvimQ4krq94yUgcSSbroi4uC1xbZ3UGMxG9M2utmaPjdpMrWW2uKRY9Mj4DZWrrY8M4pry8shsK").unwrap(),
+            1567260002);
+        let mut unlocker = Unlocker::new_for_master(&master, "whatever", None).unwrap();
+        master.add_account(Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap());
+        master
+    }
+
+    fn mine(tip: &sha256d::Hash, height: u32, miner: Address) -> Block {
+        let mut block = new_block(tip);
+        add_tx(&mut block, coin_base(miner, height));
+        block
+    }
+
+    #[test]
+    pub fn test_coins () {
+        let mut coins = Coins::new();
+        let mut master = new_master();
+        let miner = master.get_mut((0,0)).unwrap().next_key().unwrap().address.clone();
+        let genesis = genesis_block(Network::Testnet);
+        let next = mine(&genesis.bitcoin_hash(), 1, miner);
+        coins.process(&mut master, &next);
+        assert_eq!(coins.confirmed_balance(), NEW_COINS);
+        coins.unwind_tip(&next.bitcoin_hash());
+        assert_eq!(coins.confirmed_balance(), 0);
+    }
 }
