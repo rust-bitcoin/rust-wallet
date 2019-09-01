@@ -172,6 +172,10 @@ impl Unlocker {
         Ok(Unlocker{master_private, network, context, cached: HashMap::new()})
     }
 
+    pub fn new_for_master(master: &MasterAccount, passphrase: &str, pd_passphrase: Option<&str>) -> Result<Unlocker, WalletError> {
+        Self::new(master.encrypted(), passphrase, pd_passphrase, master.master_public.network, Some(&master.master_public))
+    }
+
     pub fn master_private (&self) -> &ExtendedPrivKey {
         &self.master_private
     }
@@ -572,7 +576,7 @@ mod test {
     #[test]
     fn test_pkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2PKH, 0, 0, 10).unwrap();
         master.add_account(account);
         let account = master.get_mut((0,0)).unwrap();
@@ -632,7 +636,7 @@ mod test {
     #[test]
     fn test_wpkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap();
         master.add_account(account);
         let account = master.get_mut((0,0)).unwrap();
@@ -693,7 +697,7 @@ mod test {
     #[test]
     fn test_shwpkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
         master.add_account(account);
         let account = master.get_mut((0,0)).unwrap();
@@ -756,7 +760,7 @@ mod test {
     fn test_wsh() {
 
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
 
@@ -829,7 +833,7 @@ mod test {
     fn test_wsh_csv() {
 
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new(master.encrypted(), PASSPHRASE, None, Network::Bitcoin, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
 
@@ -932,9 +936,7 @@ mod test {
         let words = "announce damage viable ticket engage curious yellow ten clock finish burden orient faculty rigid smile host offer affair suffer slogan mercy another switch park";
         let mnemonic = Mnemonic::from_str(words).unwrap();
         let master = MasterAccount::from_mnemonic(&mnemonic, 0, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new(
-            master.encrypted(), PASSPHRASE, None, Network::Bitcoin, Some(master.master_public())
-        ).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
         // this should be address of m/49'/0'/0'/0/0
         assert_eq!(account.get_key(0).unwrap().address.to_string(), "3L8V8mDQVUySGwCqiB2x8fdRRMGWyyF4YP");
