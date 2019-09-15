@@ -34,6 +34,7 @@ extern crate rand;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 
+pub mod sss;
 pub mod mnemonic;
 pub mod error;
 pub mod context;
