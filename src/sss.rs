@@ -38,15 +38,20 @@ impl ShamirSecretShare {
         let mut buffer = Vec::new();
         let mut writer = BitStreamWriter::new(&mut buffer);
         let mut words = Vec::new();
-        for hw in mnemonic.split(' ') {
+        let nw = mnemonic.split(' ').count();
+        for (i, hw) in mnemonic.split(' ').enumerate() {
             if let Ok(w) = WORDS.binary_search(&hw) {
                 words.push(w as u16);
                 writer.write(w as u64, 10).unwrap();
+                if i == nw - 4 {
+                    writer.flush().unwrap();
+                }
             }
             else {
                 return Err(Error::Mnemonic("invalid word in the key share"));
             }
         }
+        writer.flush().unwrap();
 
         if Self::checksum(words.as_slice()) != 1 {
             return Err(Error::Mnemonic("checksum failed"));
@@ -116,6 +121,22 @@ impl ShamirSecretShare {
     }
 
     fn checksum(values: &[u16]) -> u32 {
+
+        const GEN :[u32;10] = [
+            0xE0E040,
+            0x1C1C080,
+            0x3838100,
+            0x7070200,
+            0xE0E0009,
+            0x1C0C2412,
+            0x38086C24,
+            0x3090FC48,
+            0x21B1F890,
+            0x3F3F120,
+        ];
+
+        const SALT :[u16;6] = ['s' as u16, 'h' as u16, 'a' as u16, 'm' as u16, 'i' as u16, 'r' as u16];
+
         let mut chk = 1u32;
         for v in SALT.iter().chain(values.iter()) {
             let b = chk >> 20;
@@ -130,27 +151,14 @@ impl ShamirSecretShare {
     }
 }
 
-const GEN :[u32;10] = [
-    0xE0E040,
-    0x1C1C080,
-    0x3838100,
-    0x7070200,
-    0xE0E0009,
-    0x1C0C2412,
-    0x38086C24,
-    0x3090FC48,
-    0x21B1F890,
-    0x3F3F120,
-];
-const SALT :[u16;6] = ['s' as u16, 'h' as u16, 'a' as u16, 'm' as u16, 'i' as u16, 'r' as u16];
-
 mod test {
     use super::ShamirSecretShare;
 
     #[test]
     pub fn test_checksum () {
         let m = "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision keyboard";
-        ShamirSecretShare::from_mnemonic(m).expect("this should be valid");
+        let sss = ShamirSecretShare::from_mnemonic(m).unwrap();
+        assert_eq!(sss.to_mnemonic().as_str(), m);
         let m =  "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision kidney";
         assert!(ShamirSecretShare::from_mnemonic(m).is_err());
     }
