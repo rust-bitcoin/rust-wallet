@@ -21,7 +21,6 @@ use bitcoin::util::bip158::{BitStreamWriter, BitStreamReader};
 use error::Error;
 use std::io::Cursor;
 
-#[derive(Debug)]
 pub struct ShamirSecretShare {
     pub id: u16,
     pub iteration_exponent: u8,
@@ -34,7 +33,7 @@ pub struct ShamirSecretShare {
 }
 
 impl ShamirSecretShare {
-
+    /// create from human readable representation
     pub fn from_mnemonic(mnemonic: &str) -> Result<ShamirSecretShare, Error> {
         let words = Self::mnemonic_to_words(mnemonic)?;
         if Self::checksum(words.as_slice()) != 1 {
@@ -56,6 +55,7 @@ impl ShamirSecretShare {
         })
     }
 
+    /// convert to human readable representation
     pub fn to_mnemonic (&self) -> String {
         let mut bytes = Vec::new();
         let mut writer = BitStreamWriter::new(&mut bytes);
@@ -80,6 +80,7 @@ impl ShamirSecretShare {
         Self::words_to_mnemonic(&words[..])
     }
 
+    // convert from byte vector to a vector of 10 bit words
     fn bytes_to_words (bytes: &[u8]) -> Vec<u16> {
         let mut words = Vec::new();
         let mut cursor = Cursor::new(bytes);
@@ -90,6 +91,7 @@ impl ShamirSecretShare {
         words
     }
 
+    // convert from vector of 10 bit words to byte vector
     fn words_to_bytes (words: &[u16]) -> Vec<u8> {
         let mut bytes = Vec::new();
         let mut writer = BitStreamWriter::new(&mut bytes);
@@ -100,6 +102,7 @@ impl ShamirSecretShare {
         bytes
     }
 
+    // convert from human readable to a vector of 10 bit words
     fn mnemonic_to_words(mnemonic: &str) -> Result<Vec<u16>, Error> {
         let mut words = Vec::new();
         for w in mnemonic.split(' ') {
@@ -113,8 +116,8 @@ impl ShamirSecretShare {
         Ok(words)
     }
 
+    // convert to human readable words
     fn words_to_mnemonic(words: &[u16]) -> String {
-        // convert to human readable words
         let mut result = String::new();
         for w in words {
             if !result.is_empty() {
@@ -125,6 +128,7 @@ impl ShamirSecretShare {
         result
     }
 
+    // rs1024 checksum calculator
     fn checksum(values: &[u16]) -> u32 {
 
         const GEN :[u32;10] = [
