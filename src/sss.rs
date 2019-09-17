@@ -20,6 +20,10 @@
 use bitcoin::util::bip158::{BitStreamWriter, BitStreamReader};
 use error::Error;
 use std::io::Cursor;
+use crypto::pbkdf2::pbkdf2;
+use crypto::sha2::Sha256;
+use crypto::hmac::Hmac;
+use std::ops::Range;
 
 pub struct ShamirSecretShare {
     pub id: u16,
@@ -78,6 +82,45 @@ impl ShamirSecretShare {
             words[len - 3 + i] = ((chk >> (10 * (2 - i as u32))) & 1023) as u16;
         }
         Self::words_to_mnemonic(&words[..])
+    }
+
+    // encrypt master with a passphrase
+    fn encrypt(&self, master: &mut [u8], passphrase: &str) {
+        self.crypt(&[0, 1, 2, 3], master, passphrase)
+    }
+
+    // decrypt master with a passphrase
+    fn decrypt(&self, master: &mut [u8], passphrase: &str) {
+        self.crypt(&[3, 2, 1, 0], master, passphrase)
+    }
+
+    // encrypt of decrypt depending on range order
+    fn crypt(&self, range: &[u8], master: &mut [u8], passphrase: &str) {
+        let len = master.len();
+        let mut left = vec!(0u8; len/2);
+        left.as_mut_slice().copy_from_slice(&master[..len/2]);
+        let mut right = vec!(0u8; len/2);
+        right.as_mut_slice().copy_from_slice(&master[len/2..]);
+        let mut output = vec!(0u8; len/2);
+        for i in range {
+            self.feistel(*i, right.as_slice(), passphrase, &mut output);
+            output.iter_mut().zip(left.iter()).for_each(|(o, l)| *o ^= *l);
+            left.as_mut_slice().copy_from_slice(right.as_slice());
+            right.as_mut_slice().copy_from_slice(output.as_slice());
+        }
+        master[..len/2].copy_from_slice(right.as_slice());
+        master[len/2..].copy_from_slice(left.as_slice());
+    }
+
+    // a step of a Feistel network
+    fn feistel(&self, step: u8, block: &[u8], passphrase: &str, output: &mut [u8]) {
+        let mut key = [step].to_vec();
+        key.extend_from_slice(passphrase.as_bytes());
+        let mut mac = Hmac::new(Sha256::new(), key.as_slice());
+        let mut salt = "shamir".as_bytes().to_vec();
+        salt.extend_from_slice(&[(self.id>>8) as u8, (self.id&0xff) as u8]);
+        salt.extend_from_slice(block);
+        pbkdf2(&mut mac, salt.as_slice(), 2500u32 << (self.iteration_exponent as u32), output);
     }
 
     // convert from byte vector to a vector of 10 bit words
