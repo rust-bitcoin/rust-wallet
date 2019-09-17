@@ -34,88 +34,93 @@ pub struct ShamirSecretShare {
 }
 
 impl ShamirSecretShare {
-    pub fn from_mnemonic(mnemonic: &str) -> Result<ShamirSecretShare, Error> {
-        let mut buffer = Vec::new();
-        let mut writer = BitStreamWriter::new(&mut buffer);
-        let mut words = Vec::new();
-        let nw = mnemonic.split(' ').count();
-        for (i, hw) in mnemonic.split(' ').enumerate() {
-            if let Ok(w) = WORDS.binary_search(&hw) {
-                words.push(w as u16);
-                writer.write(w as u64, 10).unwrap();
-                if i == nw - 4 {
-                    writer.flush().unwrap();
-                }
-            }
-            else {
-                return Err(Error::Mnemonic("invalid word in the key share"));
-            }
-        }
-        writer.flush().unwrap();
 
+    pub fn from_mnemonic(mnemonic: &str) -> Result<ShamirSecretShare, Error> {
+        let words = Self::mnemonic_to_words(mnemonic)?;
         if Self::checksum(words.as_slice()) != 1 {
             return Err(Error::Mnemonic("checksum failed"));
         }
 
-        let mut prefix_cursor = Cursor::new(&buffer[.. 5]);
-        let mut prefix_reader = BitStreamReader::new(&mut prefix_cursor);
+        let prefix = Self::words_to_bytes(&words[..4]);
+        let mut cursor = Cursor::new(&prefix);
+        let mut reader = BitStreamReader::new(&mut cursor);
         Ok(ShamirSecretShare {
-            id: prefix_reader.read(15).unwrap() as u16,
-            iteration_exponent: prefix_reader.read(5).unwrap() as u8,
-            group_index: prefix_reader.read(4).unwrap() as u8,
-            group_threshold: (prefix_reader.read(4).unwrap() + 1) as u8,
-            group_count: (prefix_reader.read(4).unwrap() + 1) as u8,
-            member_index: prefix_reader.read(4).unwrap() as u8,
-            member_threshold: (prefix_reader.read(4).unwrap() + 1) as u8,
-            value: buffer[5..buffer.len() - 4].to_vec()
+            id: reader.read(15).unwrap() as u16,
+            iteration_exponent: reader.read(5).unwrap() as u8,
+            group_index: reader.read(4).unwrap() as u8,
+            group_threshold: (reader.read(4).unwrap() + 1) as u8,
+            group_count: (reader.read(4).unwrap() + 1) as u8,
+            member_index: reader.read(4).unwrap() as u8,
+            member_threshold: (reader.read(4).unwrap() + 1) as u8,
+            value: Self::words_to_bytes(&words[4 .. words.len()-3])
         })
     }
 
     pub fn to_mnemonic (&self) -> String {
-        let mut words = Vec::new();
-        {
-            // compile prefix words
-            let mut prefix = Vec::new();
-            let mut prefix_writer = BitStreamWriter::new(&mut prefix);
-            prefix_writer.write(self.id as u64, 15).unwrap();
-            prefix_writer.write(self.iteration_exponent as u64, 5).unwrap();
-            prefix_writer.write(self.group_index as u64, 4).unwrap();
-            prefix_writer.write((self.group_threshold - 1) as u64, 4).unwrap();
-            prefix_writer.write((self.group_count - 1) as u64, 4).unwrap();
-            prefix_writer.write(self.member_index as u64, 4).unwrap();
-            prefix_writer.write((self.member_threshold - 1) as u64, 4).unwrap();
-            prefix_writer.flush().unwrap();
-            let mut prefix_cursor = Cursor::new(prefix.as_slice());
-            let mut prefix_reader = BitStreamReader::new(&mut prefix_cursor);
-            words.push(prefix_reader.read(10).unwrap() as u16);
-            words.push(prefix_reader.read(10).unwrap() as u16);
-            words.push(prefix_reader.read(10).unwrap() as u16);
-            words.push(prefix_reader.read(10).unwrap() as u16);
-        }
-        {
-            // append share in words
-            let mut share_cursor = Cursor::new(self.value.as_slice());
-            let mut share_reader = BitStreamReader::new(&mut share_cursor);
-            while let Ok(w) = share_reader.read(10) {
-                words.push(w as u16);
-            }
-            // dummy checksum
-            words.push(0);
-            words.push(0);
-            words.push(0);
-        }
+        let mut bytes = Vec::new();
+        let mut writer = BitStreamWriter::new(&mut bytes);
+        writer.write(self.id as u64, 15).unwrap();
+        writer.write(self.iteration_exponent as u64, 5).unwrap();
+        writer.write(self.group_index as u64, 4).unwrap();
+        writer.write((self.group_threshold - 1) as u64, 4).unwrap();
+        writer.write((self.group_count - 1) as u64, 4).unwrap();
+        writer.write(self.member_index as u64, 4).unwrap();
+        writer.write((self.member_threshold - 1) as u64, 4).unwrap();
+        writer.flush().unwrap();
+        bytes.extend_from_slice(self.value.as_slice());
+        let mut words = Self::bytes_to_words(&bytes[..]);
+        words.push(0);
+        words.push(0);
+        words.push(0);
         let chk = Self::checksum(words.as_slice()) ^ 1;
         let len = words.len();
         for i in 0..3 {
             words[len - 3 + i] = ((chk >> (10 * (2 - i as u32))) & 1023) as u16;
         }
+        Self::words_to_mnemonic(&words[..])
+    }
+
+    fn bytes_to_words (bytes: &[u8]) -> Vec<u16> {
+        let mut words = Vec::new();
+        let mut cursor = Cursor::new(bytes);
+        let mut reader = BitStreamReader::new(&mut cursor);
+        while let Ok(w) = reader.read(10) {
+            words.push(w as u16);
+        }
+        words
+    }
+
+    fn words_to_bytes (words: &[u16]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut writer = BitStreamWriter::new(&mut bytes);
+        for w in words {
+            writer.write(*w as u64, 10).unwrap();
+        }
+        writer.flush().unwrap();
+        bytes
+    }
+
+    fn mnemonic_to_words(mnemonic: &str) -> Result<Vec<u16>, Error> {
+        let mut words = Vec::new();
+        for w in mnemonic.split(' ') {
+            if let Ok(w) = WORDS.binary_search(&w) {
+                words.push(w as u16);
+            }
+            else {
+                return Err(Error::Mnemonic("invalid word in the key share"));
+            }
+        }
+        Ok(words)
+    }
+
+    fn words_to_mnemonic(words: &[u16]) -> String {
         // convert to human readable words
         let mut result = String::new();
         for w in words {
             if !result.is_empty() {
                 result.push(' ');
             }
-            result.push_str(WORDS[w as usize]);
+            result.push_str(WORDS[*w as usize]);
         }
         result
     }
@@ -155,7 +160,7 @@ mod test {
     use super::ShamirSecretShare;
 
     #[test]
-    pub fn test_checksum () {
+    pub fn test_encoding() {
         let m = "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision keyboard";
         let sss = ShamirSecretShare::from_mnemonic(m).unwrap();
         assert_eq!(sss.to_mnemonic().as_str(), m);
