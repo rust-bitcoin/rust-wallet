@@ -28,22 +28,16 @@ use rand::{thread_rng, RngCore};
 use crypto::mac::Mac;
 use bitcoin::bech32::ToBase32;
 use std::collections::HashSet;
-use error::Error::Unsupported;
 
 pub struct ShamirSecretSharing {
-    pub id: u16,
-    pub iteration_exponent: u8,
-    pub master: Vec<u8>
 }
 
 impl ShamirSecretSharing {
-    pub fn new (id: u16, iteration_exponent: u8, master: Vec<u8>) -> Result<ShamirSecretSharing, Error> {
-        if master.len() < 16 || master.len() % 2 != 0 {
+    pub fn generate (group_treshold: u8, groups: &[(u8, u8)], secret: Vec<u8>, passphrase: Option<&str>, iteration_exponent: u8) -> Result<Vec<Share>, Error> {
+        if secret.len() < 16 || secret.len() % 2 != 0 {
             return Err(Error::Unsupported("master key entropy must be at least 128 bits and multiple of 16 bits"));
         }
-        Ok(ShamirSecretSharing{
-            id, iteration_exponent, master
-        })
+        Ok(Vec::new())
     }
 
     fn recover_secret(threshold: u8, shares: &Vec<(u8, Vec<u8>)>) -> Result<Vec<u8>, Error> {
@@ -144,15 +138,15 @@ impl ShamirSecretSharing {
     }
 
     // encrypt master with a passphrase
-    fn encrypt(&self, passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
+    fn encrypt(id: u16, iteration_exponent: u8, master: &[u8], passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
         Self::checkpass(passphrase)?;
-        Ok(self.crypt(&[0, 1, 2, 3], passphrase.unwrap_or("")))
+        Ok(Self::crypt(id, iteration_exponent, master, &[0, 1, 2, 3], passphrase.unwrap_or("")))
     }
 
     // decrypt master with a passphrase
-    fn decrypt(&self, passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
+    fn decrypt(id: u16, iteration_exponent: u8, master: &[u8], passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
         Self::checkpass(passphrase)?;
-        Ok(self.crypt(&[3, 2, 1, 0], passphrase.unwrap_or("")))
+        Ok(Self::crypt(id, iteration_exponent, master, &[3, 2, 1, 0], passphrase.unwrap_or("")))
     }
 
     // check if password is only printable ascii
@@ -166,16 +160,16 @@ impl ShamirSecretSharing {
     }
 
     // encrypt of decrypt depending on range order
-    fn crypt(&self, range: &[u8], passphrase: &str) -> Vec<u8> {
-        let len = self.master.len();
+    fn crypt(id: u16, iteration_exponent: u8, master: &[u8], range: &[u8], passphrase: &str) -> Vec<u8> {
+        let len = master.len();
         let mut left = vec!(0u8; len/2);
         let mut right = vec!(0u8; len/2);
         let mut output = vec!(0u8; len/2);
 
-        left.as_mut_slice().copy_from_slice(&self.master[..len/2]);
-        right.as_mut_slice().copy_from_slice(&self.master[len/2..]);
+        left.as_mut_slice().copy_from_slice(&master[..len/2]);
+        right.as_mut_slice().copy_from_slice(&master[len/2..]);
         for i in range {
-            self.feistel(*i, right.as_slice(), passphrase, &mut output);
+            Self::feistel(id, iteration_exponent, *i, right.as_slice(), passphrase, &mut output);
             output.iter_mut().zip(left.iter()).for_each(|(o, l)| *o ^= *l);
             left.as_mut_slice().copy_from_slice(right.as_slice());
             right.as_mut_slice().copy_from_slice(output.as_slice());
@@ -185,14 +179,14 @@ impl ShamirSecretSharing {
     }
 
     // a step of a Feistel network
-    fn feistel(&self, step: u8, block: &[u8], passphrase: &str, output: &mut [u8]) {
+    fn feistel(id: u16, iteration_exponent: u8, step: u8, block: &[u8], passphrase: &str, output: &mut [u8]) {
         let mut key = [step].to_vec();
         key.extend_from_slice(passphrase.as_bytes());
         let mut mac = Hmac::new(Sha256::new(), key.as_slice());
         let mut salt = "shamir".as_bytes().to_vec();
-        salt.extend_from_slice(&[(self.id>>8) as u8, (self.id&0xff) as u8]);
+        salt.extend_from_slice(&[(id>>8) as u8, (id&0xff) as u8]);
         salt.extend_from_slice(block);
-        pbkdf2(&mut mac, salt.as_slice(), 2500u32 << (self.iteration_exponent as u32), output);
+        pbkdf2(&mut mac, salt.as_slice(), 2500u32 << (iteration_exponent as u32), output);
     }
 
     const EXP:[u8;255] = [1, 3, 5, 15, 17, 51, 85, 255, 26, 46, 114, 150, 161, 248, 19, 53, 95, 225, 56, 72, 216, 115, 149, 164, 247, 2, 6, 10, 30, 34, 102, 170, 229, 52, 92, 228, 55, 89, 235, 38, 106, 190, 217, 112, 144, 171, 230, 49, 83, 245, 4, 12, 20, 60, 68, 204, 79, 209, 104, 184, 211, 110, 178, 205, 76, 212, 103, 169, 224, 59, 77, 215, 98, 166, 241, 8, 24, 40, 120, 136, 131, 158, 185, 208, 107, 189, 220, 127, 129, 152, 179, 206, 73, 219, 118, 154, 181, 196, 87, 249, 16, 48, 80, 240, 11, 29, 39, 105, 187, 214, 97, 163, 254, 25, 43, 125, 135, 146, 173, 236, 47, 113, 147, 174, 233, 32, 96, 160, 251, 22, 58, 78, 210, 109, 183, 194, 93, 231, 50, 86, 250, 21, 63, 65, 195, 94, 226, 61, 71, 201, 64, 192, 91, 237, 44, 116, 156, 191, 218, 117, 159, 186, 213, 100, 172, 239, 42, 126, 130, 157, 188, 223, 122, 142, 137, 128, 155, 182, 193, 88, 232, 35, 101, 175, 234, 37, 111, 177, 200, 67, 197, 84, 252, 31, 33, 99, 165, 244, 7, 9, 27, 45, 119, 153, 176, 203, 70, 202, 69, 207, 74, 222, 121, 139, 134, 145, 168, 227, 62, 66, 198, 81, 243, 14, 18, 54, 90, 238, 41, 123, 141, 140, 143, 138, 133, 148, 167, 242, 13, 23, 57, 75, 221, 124, 132, 151, 162, 253, 28, 36, 108, 180, 199, 82, 246, ];
@@ -216,6 +210,10 @@ impl Share {
         let words = Self::mnemonic_to_words(mnemonic)?;
         if words.len() < 20 {
             return Err(Error::Mnemonic("key share mnemonic must be at least 20 words"));
+        }
+        let padding_len = 10*(words.len() - 4)%16;
+        if padding_len > 8 {
+            return Err(Error::Unsupported("Invalid mnemonic length"));
         }
         if Self::checksum(words.as_slice()) != 1 {
             return Err(Error::Mnemonic("checksum failed"));
@@ -343,6 +341,8 @@ impl Share {
 
 mod test {
     use super::{ShamirSecretSharing, Share};
+    use sss::WORDS;
+    use std::collections::HashSet;
 
     #[test]
     pub fn test_encoding() {
@@ -350,6 +350,8 @@ mod test {
         let sss = Share::from_mnemonic(m).unwrap();
         assert_eq!(sss.to_mnemonic().as_str(), m);
         let m =  "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision kidney";
+        assert!(Share::from_mnemonic(m).is_err());
+        let m = "duckling enlarge academic academic email result length solution fridge kidney coal piece deal husband erode duke ajar music cargo fitness";
         assert!(Share::from_mnemonic(m).is_err());
     }
 
@@ -374,6 +376,16 @@ mod test {
         for (i, l) in log.iter().enumerate() {
             assert_eq!(ShamirSecretSharing::LOG[i], *l);
         }
+    }
+
+    #[test]
+    pub fn wordlist_checks () {
+        let mut words = WORDS.clone();
+        words.sort();
+        assert_eq!(&words[..], &WORDS[..]);
+        assert!(!WORDS.iter().any(|w| w.len() < 4 || w.len() > 8));
+        let mut first4 = HashSet::new();
+        assert!(!WORDS.iter().any(|w| first4.insert(w[..4].to_string()) == false));
     }
 }
 
