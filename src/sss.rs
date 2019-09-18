@@ -24,8 +24,182 @@ use crypto::pbkdf2::pbkdf2;
 use crypto::sha2::Sha256;
 use crypto::hmac::Hmac;
 use std::ops::Range;
+use rand::{thread_rng, RngCore};
+use crypto::mac::Mac;
+use bitcoin::bech32::ToBase32;
+use std::collections::HashSet;
+use error::Error::Unsupported;
 
-pub struct ShamirSecretShare {
+pub struct ShamirSecretSharing {
+    pub id: u16,
+    pub iteration_exponent: u8,
+    pub master: Vec<u8>
+}
+
+impl ShamirSecretSharing {
+    pub fn new (id: u16, iteration_exponent: u8, master: Vec<u8>) -> Result<ShamirSecretSharing, Error> {
+        if master.len() < 16 || master.len() % 2 != 0 {
+            return Err(Error::Unsupported("master key entropy must be at least 128 bits and multiple of 16 bits"));
+        }
+        Ok(ShamirSecretSharing{
+            id, iteration_exponent, master
+        })
+    }
+
+    fn recover_secret(threshold: u8, shares: &Vec<(u8, Vec<u8>)>) -> Result<Vec<u8>, Error> {
+        if threshold == 1 {
+            return Ok(shares[0].1.clone());
+        }
+        let shared_secret = Self::interpolate(shares, 255)?;
+        let digest_share = Self::interpolate(shares, 254)?;
+        if &digest_share[..4] != Self::share_digest(&digest_share[4..], shared_secret.as_slice()).as_slice() {
+            return Err(Error::Unsupported("share digest incorrect"));
+        }
+        Ok(shared_secret)
+    }
+
+    fn split_secret (threshold: u8, share_count: u8, shared_secret: &[u8]) -> Result<Vec<(u8, Vec<u8>)>, Error> {
+        if threshold < 1 {
+            return Err(Error::Unsupported("sharing threashold must be > 1"));
+        }
+
+        if threshold > share_count {
+            return Err(Error::Unsupported("number of shares should be at least equal threshold"));
+        }
+
+        if share_count > 16 {
+            return Err(Error::Unsupported("more than 16 shares are not supported"));
+        }
+
+        let mut shares = Vec::new();
+
+        if threshold == 1 {
+            for i in 0 .. share_count {
+                shares.push((i, shared_secret.to_vec()));
+            }
+            return Ok(shares);
+        }
+
+        let random_shares_count = share_count - 2;
+
+        for i in 0 .. random_shares_count {
+            let mut share = vec!(0u8; shared_secret.len());
+            thread_rng().fill_bytes(share.as_mut_slice());
+            shares.push((i, share));
+        }
+
+
+        let mut base_shares = shares.clone();
+        let mut random_part = vec!(0u8; shared_secret.len() - 4);
+        thread_rng().fill_bytes(random_part.as_mut_slice());
+        let mut digest = Self::share_digest(random_part.as_slice(), shared_secret);
+        digest.extend_from_slice(random_part.as_slice());
+        base_shares.push((254, digest));
+        base_shares.push((255, shared_secret.to_vec()));
+
+        for i in random_shares_count .. share_count {
+            shares.push((i, Self::interpolate(&base_shares, i)?));
+        }
+
+        Ok(shares)
+    }
+
+    fn interpolate(shares: &Vec<(u8, Vec<u8>)>, x: u8) -> Result<Vec<u8>, Error> {
+        let x_coordinates = shares.iter().map(|(i, _)|*i).collect::<HashSet<_>>();
+        if x_coordinates.len() != shares.len() {
+            return Err(Error::Unsupported("need unique shares for interpolation"));
+        }
+        if shares.len () < 1 {
+            return Err(Error::Unsupported("need at least one share for interpolation"));
+        }
+        let len = shares[0].1.len();
+        if shares.iter().any(|s| s.1.len() != len) {
+            return Err(Error::Unsupported("shares should have equal length"));
+        }
+        if x_coordinates.contains(&x) {
+            return Ok(shares.iter().find_map(|(i, v)| if *i == x {Some (v)} else {None}).unwrap().clone())
+        }
+        let log_prod = shares.iter().map(|(i, _)| Self::LOG[(*i ^ x) as usize]).fold(0u16, |a, v| a + v as u16);
+        let mut result = vec!(0u8; len);
+        for (i, share) in shares {
+            let log_basis = (
+                (log_prod
+                - Self::LOG[(*i ^ x) as usize] as u16
+                - shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0u16, |a, v| a + v as u16)
+                ) % 255
+            ) as u8;
+            result.iter_mut().zip(share.iter())
+                .for_each(|(r, s)|
+                    *r ^= if *s != 0 {
+                        Self::EXP[((Self::LOG[*s as usize] + log_basis) % 255) as usize]
+                    } else {0});
+        }
+        Ok(result)
+    }
+
+    fn share_digest(random: &[u8], shared_secret: &[u8]) -> Vec<u8> {
+        let mut mac = Hmac::new(Sha256::new(), random);
+        mac.input(shared_secret);
+        mac.result().code()[..4].to_vec()
+    }
+
+    // encrypt master with a passphrase
+    fn encrypt(&self, passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
+        Self::checkpass(passphrase)?;
+        Ok(self.crypt(&[0, 1, 2, 3], passphrase.unwrap_or("")))
+    }
+
+    // decrypt master with a passphrase
+    fn decrypt(&self, passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
+        Self::checkpass(passphrase)?;
+        Ok(self.crypt(&[3, 2, 1, 0], passphrase.unwrap_or("")))
+    }
+
+    // check if password is only printable ascii
+    fn checkpass (passphrase: Option<&str>) -> Result<(), Error> {
+        if let Some(p) = passphrase {
+            if p.as_bytes().iter().any(|b| *b < 32 || *b > 126) {
+                return Err(Error::Unsupported("passphrase should only contain printable ASCII"));
+            }
+        }
+        Ok(())
+    }
+
+    // encrypt of decrypt depending on range order
+    fn crypt(&self, range: &[u8], passphrase: &str) -> Vec<u8> {
+        let len = self.master.len();
+        let mut left = vec!(0u8; len/2);
+        let mut right = vec!(0u8; len/2);
+        let mut output = vec!(0u8; len/2);
+
+        left.as_mut_slice().copy_from_slice(&self.master[..len/2]);
+        right.as_mut_slice().copy_from_slice(&self.master[len/2..]);
+        for i in range {
+            self.feistel(*i, right.as_slice(), passphrase, &mut output);
+            output.iter_mut().zip(left.iter()).for_each(|(o, l)| *o ^= *l);
+            left.as_mut_slice().copy_from_slice(right.as_slice());
+            right.as_mut_slice().copy_from_slice(output.as_slice());
+        }
+        right.extend_from_slice(left.as_slice());
+        right
+    }
+
+    // a step of a Feistel network
+    fn feistel(&self, step: u8, block: &[u8], passphrase: &str, output: &mut [u8]) {
+        let mut key = [step].to_vec();
+        key.extend_from_slice(passphrase.as_bytes());
+        let mut mac = Hmac::new(Sha256::new(), key.as_slice());
+        let mut salt = "shamir".as_bytes().to_vec();
+        salt.extend_from_slice(&[(self.id>>8) as u8, (self.id&0xff) as u8]);
+        salt.extend_from_slice(block);
+        pbkdf2(&mut mac, salt.as_slice(), 2500u32 << (self.iteration_exponent as u32), output);
+    }
+
+    const EXP:[u8;255] = [1, 3, 5, 15, 17, 51, 85, 255, 26, 46, 114, 150, 161, 248, 19, 53, 95, 225, 56, 72, 216, 115, 149, 164, 247, 2, 6, 10, 30, 34, 102, 170, 229, 52, 92, 228, 55, 89, 235, 38, 106, 190, 217, 112, 144, 171, 230, 49, 83, 245, 4, 12, 20, 60, 68, 204, 79, 209, 104, 184, 211, 110, 178, 205, 76, 212, 103, 169, 224, 59, 77, 215, 98, 166, 241, 8, 24, 40, 120, 136, 131, 158, 185, 208, 107, 189, 220, 127, 129, 152, 179, 206, 73, 219, 118, 154, 181, 196, 87, 249, 16, 48, 80, 240, 11, 29, 39, 105, 187, 214, 97, 163, 254, 25, 43, 125, 135, 146, 173, 236, 47, 113, 147, 174, 233, 32, 96, 160, 251, 22, 58, 78, 210, 109, 183, 194, 93, 231, 50, 86, 250, 21, 63, 65, 195, 94, 226, 61, 71, 201, 64, 192, 91, 237, 44, 116, 156, 191, 218, 117, 159, 186, 213, 100, 172, 239, 42, 126, 130, 157, 188, 223, 122, 142, 137, 128, 155, 182, 193, 88, 232, 35, 101, 175, 234, 37, 111, 177, 200, 67, 197, 84, 252, 31, 33, 99, 165, 244, 7, 9, 27, 45, 119, 153, 176, 203, 70, 202, 69, 207, 74, 222, 121, 139, 134, 145, 168, 227, 62, 66, 198, 81, 243, 14, 18, 54, 90, 238, 41, 123, 141, 140, 143, 138, 133, 148, 167, 242, 13, 23, 57, 75, 221, 124, 132, 151, 162, 253, 28, 36, 108, 180, 199, 82, 246, ];
+    const LOG:[u8;256] = [0, 0, 25, 1, 50, 2, 26, 198, 75, 199, 27, 104, 51, 238, 223, 3, 100, 4, 224, 14, 52, 141, 129, 239, 76, 113, 8, 200, 248, 105, 28, 193, 125, 194, 29, 181, 249, 185, 39, 106, 77, 228, 166, 114, 154, 201, 9, 120, 101, 47, 138, 5, 33, 15, 225, 36, 18, 240, 130, 69, 53, 147, 218, 142, 150, 143, 219, 189, 54, 208, 206, 148, 19, 92, 210, 241, 64, 70, 131, 56, 102, 221, 253, 48, 191, 6, 139, 98, 179, 37, 226, 152, 34, 136, 145, 16, 126, 110, 72, 195, 163, 182, 30, 66, 58, 107, 40, 84, 250, 133, 61, 186, 43, 121, 10, 21, 155, 159, 94, 202, 78, 212, 172, 229, 243, 115, 167, 87, 175, 88, 168, 80, 244, 234, 214, 116, 79, 174, 233, 213, 231, 230, 173, 232, 44, 215, 117, 122, 235, 22, 11, 245, 89, 203, 95, 176, 156, 169, 81, 160, 127, 12, 246, 111, 23, 196, 73, 236, 216, 67, 31, 45, 164, 118, 123, 183, 204, 187, 62, 90, 251, 96, 177, 134, 59, 82, 161, 108, 170, 85, 41, 157, 151, 178, 135, 144, 97, 190, 220, 252, 188, 149, 207, 205, 55, 63, 91, 209, 83, 57, 132, 60, 65, 162, 109, 71, 20, 42, 158, 93, 86, 242, 211, 171, 68, 17, 146, 217, 35, 32, 46, 137, 180, 124, 184, 38, 119, 153, 227, 165, 103, 74, 237, 222, 197, 49, 254, 24, 13, 99, 140, 128, 192, 247, 112, 7, ];
+}
+
+pub struct Share {
     pub id: u16,
     pub iteration_exponent: u8,
     pub group_index: u8,
@@ -36,18 +210,21 @@ pub struct ShamirSecretShare {
     pub value: Vec<u8>
 }
 
-impl ShamirSecretShare {
+impl Share {
     /// create from human readable representation
-    pub fn from_mnemonic(mnemonic: &str) -> Result<ShamirSecretShare, Error> {
+    pub fn from_mnemonic(mnemonic: &str) -> Result<Share, Error> {
         let words = Self::mnemonic_to_words(mnemonic)?;
+        if words.len() < 20 {
+            return Err(Error::Mnemonic("key share mnemonic must be at least 20 words"));
+        }
         if Self::checksum(words.as_slice()) != 1 {
             return Err(Error::Mnemonic("checksum failed"));
         }
-
+        let value = Self::words_to_bytes(&words[4 .. words.len()-3]);
         let prefix = Self::words_to_bytes(&words[..4]);
         let mut cursor = Cursor::new(&prefix);
         let mut reader = BitStreamReader::new(&mut cursor);
-        Ok(ShamirSecretShare {
+        Ok(Share {
             id: reader.read(15).unwrap() as u16,
             iteration_exponent: reader.read(5).unwrap() as u8,
             group_index: reader.read(4).unwrap() as u8,
@@ -55,7 +232,7 @@ impl ShamirSecretShare {
             group_count: (reader.read(4).unwrap() + 1) as u8,
             member_index: reader.read(4).unwrap() as u8,
             member_threshold: (reader.read(4).unwrap() + 1) as u8,
-            value: Self::words_to_bytes(&words[4 .. words.len()-3])
+            value
         })
     }
 
@@ -82,45 +259,6 @@ impl ShamirSecretShare {
             words[len - 3 + i] = ((chk >> (10 * (2 - i as u32))) & 1023) as u16;
         }
         Self::words_to_mnemonic(&words[..])
-    }
-
-    // encrypt master with a passphrase
-    fn encrypt(&self, master: &mut [u8], passphrase: &str) {
-        self.crypt(&[0, 1, 2, 3], master, passphrase)
-    }
-
-    // decrypt master with a passphrase
-    fn decrypt(&self, master: &mut [u8], passphrase: &str) {
-        self.crypt(&[3, 2, 1, 0], master, passphrase)
-    }
-
-    // encrypt of decrypt depending on range order
-    fn crypt(&self, range: &[u8], master: &mut [u8], passphrase: &str) {
-        let len = master.len();
-        let mut left = vec!(0u8; len/2);
-        left.as_mut_slice().copy_from_slice(&master[..len/2]);
-        let mut right = vec!(0u8; len/2);
-        right.as_mut_slice().copy_from_slice(&master[len/2..]);
-        let mut output = vec!(0u8; len/2);
-        for i in range {
-            self.feistel(*i, right.as_slice(), passphrase, &mut output);
-            output.iter_mut().zip(left.iter()).for_each(|(o, l)| *o ^= *l);
-            left.as_mut_slice().copy_from_slice(right.as_slice());
-            right.as_mut_slice().copy_from_slice(output.as_slice());
-        }
-        master[..len/2].copy_from_slice(right.as_slice());
-        master[len/2..].copy_from_slice(left.as_slice());
-    }
-
-    // a step of a Feistel network
-    fn feistel(&self, step: u8, block: &[u8], passphrase: &str, output: &mut [u8]) {
-        let mut key = [step].to_vec();
-        key.extend_from_slice(passphrase.as_bytes());
-        let mut mac = Hmac::new(Sha256::new(), key.as_slice());
-        let mut salt = "shamir".as_bytes().to_vec();
-        salt.extend_from_slice(&[(self.id>>8) as u8, (self.id&0xff) as u8]);
-        salt.extend_from_slice(block);
-        pbkdf2(&mut mac, salt.as_slice(), 2500u32 << (self.iteration_exponent as u32), output);
     }
 
     // convert from byte vector to a vector of 10 bit words
@@ -204,15 +342,38 @@ impl ShamirSecretShare {
 }
 
 mod test {
-    use super::ShamirSecretShare;
+    use super::{ShamirSecretSharing, Share};
 
     #[test]
     pub fn test_encoding() {
         let m = "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision keyboard";
-        let sss = ShamirSecretShare::from_mnemonic(m).unwrap();
+        let sss = Share::from_mnemonic(m).unwrap();
         assert_eq!(sss.to_mnemonic().as_str(), m);
         let m =  "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision kidney";
-        assert!(ShamirSecretShare::from_mnemonic(m).is_err());
+        assert!(Share::from_mnemonic(m).is_err());
+    }
+
+    #[test]
+    pub fn precompute () {
+        let mut exp = Vec::new();
+        let mut log = vec!(0u8; 256);
+        let mut poly = 1u16;
+        for i in 0u8 .. 255u8 {
+            exp.push(poly as u8);
+            log[poly as usize] = i;
+            poly = (poly << 1) ^ poly;
+            if poly & 0x100 != 0 {
+                poly ^= 0x11b;
+            }
+        }
+
+        for (i, e) in exp.iter().enumerate() {
+            assert_eq!(ShamirSecretSharing::EXP[i], *e);
+        }
+
+        for (i, l) in log.iter().enumerate() {
+            assert_eq!(ShamirSecretSharing::LOG[i], *l);
+        }
     }
 }
 
