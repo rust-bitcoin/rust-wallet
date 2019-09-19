@@ -27,15 +27,48 @@ use rand::{thread_rng, RngCore};
 use crypto::mac::Mac;
 use std::collections::{HashSet, HashMap};
 
-pub struct ShamirSecretSharing {
-}
+const RADIX_BITS: usize = 10; // The length of the radix in bits.
+
+const RADIX: usize = 1 << RADIX_BITS; // The number of words in the word list.
+
+const ID_LENGTH_BITS: usize = 15; // The length of the random identifier in bits.
+
+const ITERATION_EXP_LENGTH_BITS: usize = 5; // The length of the iteration exponent in bits.
+
+const fn bits_to_words(n: usize) -> usize { (n + RADIX_BITS - 1) / RADIX_BITS }
+
+const ID_EXP_LENGTH_WORDS: usize = bits_to_words(ID_LENGTH_BITS + ITERATION_EXP_LENGTH_BITS); // The length of the random identifier and iteration exponent in words.
+
+const MAX_SHARE_COUNT: u8 = 16; // The maximum number of shares that can be created.
+
+const CHECKSUM_LENGTH_WORDS: usize = 3; // The length of the RS1024 checksum in words.
+
+const DIGEST_LENGTH_BYTES: usize = 4; // The length of the digest of the shared secret in bytes.
+
+const CUSTOMIZATION_STRING: &[u8;6] = b"shamir"; // The customization string used in the RS1024 checksum and in the PBKDF2 salt.
+
+const METADATA_LENGTH_WORDS: usize = ID_EXP_LENGTH_WORDS + 2 + CHECKSUM_LENGTH_WORDS; // The length of the mnemonic in words without the share value.
+
+const MIN_STRENGTH_BITS: usize = 128; // The minimum allowed entropy of the master secret.
+
+const MIN_MNEMONIC_LENGTH_WORDS: usize = METADATA_LENGTH_WORDS + bits_to_words(MIN_STRENGTH_BITS); // The minimum allowed length of the mnemonic in words.
+
+const BASE_ITERATION_COUNT: usize = 10000; // The minimum number of iterations to use in PBKDF2.
+
+const ROUND_COUNT: usize = 4; // The number of rounds to use in the Feistel cipher.
+
+const SECRET_INDEX: usize = 255; // The index of the share containing the shared secret.
+
+const DIGEST_INDEX: usize = 254; // The index of the share containing the digest of the shared secret.
+
+pub struct ShamirSecretSharing {}
 
 impl ShamirSecretSharing {
     pub fn generate (group_threshold: u8, groups: &[(u8, u8)], secret: &[u8], passphrase: Option<&str>, iteration_exponent: u8) -> Result<Vec<Share>, Error> {
-        if secret.len() < 16 || secret.len() % 2 != 0 {
+        if secret.len() * 8 < MIN_STRENGTH_BITS || secret.len() % 2 != 0 {
             return Err(Error::Unsupported("master key entropy must be at least 128 bits and multiple of 16 bits"));
         }
-        if group_threshold > 16 {
+        if group_threshold > MAX_SHARE_COUNT {
             return Err(Error::Unsupported("more than 16 groups are not supported"));
         }
         if group_threshold as usize > groups.len() {
@@ -47,14 +80,14 @@ impl ShamirSecretSharing {
         if groups.iter().any(|(threshold, count)| *threshold > *count) {
             return Err(Error::Unsupported("number of shares must not be less than threshold"));
         }
-        let id = (thread_rng().next_u32() % 0x7fff) as u16;
+        let id = (thread_rng().next_u32() % ((2^(ID_LENGTH_BITS+1)-1) as u32)) as u16;
         let group_shares = Self::split_secret(group_threshold, groups.len() as u8,
                                               Self::encrypt(id, iteration_exponent, secret, passphrase)?.as_slice())?;
         let mut shares = Vec::new();
         for (i, share) in &group_shares {
             for (threshold, count) in groups {
                 for (j, value) in Self::split_secret(*threshold, *count, share)? {
-                    shares.push(Share{id, value, iteration_exponent, group_count: groups.len() as u8,
+                    shares.push(Share {id, value, iteration_exponent, group_count: groups.len() as u8,
                         group_index: *i, group_threshold, member_index: j, member_threshold: *threshold});
                 }
             }
@@ -119,9 +152,9 @@ impl ShamirSecretSharing {
         if threshold == 1 {
             return Ok(shares[0].1.clone());
         }
-        let shared_secret = Self::interpolate(shares, 255)?;
-        let digest_share = Self::interpolate(shares, 254)?;
-        if &digest_share[..4] != Self::share_digest(&digest_share[4..], shared_secret.as_slice()).as_slice() {
+        let shared_secret = Self::interpolate(shares, SECRET_INDEX as u8)?;
+        let digest_share = Self::interpolate(shares, DIGEST_INDEX as u8)?;
+        if &digest_share[..DIGEST_LENGTH_BYTES] != Self::share_digest(&digest_share[DIGEST_LENGTH_BYTES..], shared_secret.as_slice()).as_slice() {
             return Err(Error::Unsupported("share digest incorrect"));
         }
         Ok(shared_secret)
@@ -136,8 +169,8 @@ impl ShamirSecretSharing {
             return Err(Error::Unsupported("number of shares should be at least equal threshold"));
         }
 
-        if share_count > 16 {
-            return Err(Error::Unsupported("more than 16 shares are not supported"));
+        if share_count > MAX_SHARE_COUNT {
+            return Err(Error::Unsupported("too many shares"));
         }
 
         let mut shares = Vec::new();
@@ -159,12 +192,12 @@ impl ShamirSecretSharing {
 
 
         let mut base_shares = shares.clone();
-        let mut random_part = vec!(0u8; shared_secret.len() - 4);
+        let mut random_part = vec!(0u8; shared_secret.len() - DIGEST_LENGTH_BYTES);
         thread_rng().fill_bytes(random_part.as_mut_slice());
         let mut digest = Self::share_digest(random_part.as_slice(), shared_secret);
         digest.extend_from_slice(random_part.as_slice());
-        base_shares.push((254, digest));
-        base_shares.push((255, shared_secret.to_vec()));
+        base_shares.push((DIGEST_INDEX as u8, digest));
+        base_shares.push((SECRET_INDEX as u8, shared_secret.to_vec()));
 
         for i in random_shares_count .. share_count {
             shares.push((i, Self::interpolate(&base_shares, i)?));
@@ -214,13 +247,17 @@ impl ShamirSecretSharing {
     // encrypt master with a passphrase
     fn encrypt(id: u16, iteration_exponent: u8, master: &[u8], passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
         Self::checkpass(passphrase)?;
-        Ok(Self::crypt(id, iteration_exponent, master, &[0, 1, 2, 3], passphrase.unwrap_or("")))
+        Ok(Self::crypt(id, iteration_exponent, master,
+                       (0 .. ROUND_COUNT).map(|n| n as u8).collect::<Vec<_>>().as_slice(),
+                       passphrase.unwrap_or("")))
     }
 
     // decrypt master with a passphrase
     fn decrypt(id: u16, iteration_exponent: u8, master: &[u8], passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
         Self::checkpass(passphrase)?;
-        Ok(Self::crypt(id, iteration_exponent, master, &[3, 2, 1, 0], passphrase.unwrap_or("")))
+        Ok(Self::crypt(id, iteration_exponent, master,
+                       (0 .. ROUND_COUNT).rev().map(|n| n as u8).collect::<Vec<_>>().as_slice(),
+                       passphrase.unwrap_or("")))
     }
 
     // check if password is only printable ascii
@@ -260,7 +297,7 @@ impl ShamirSecretSharing {
         let mut salt = "shamir".as_bytes().to_vec();
         salt.extend_from_slice(&[(id>>8) as u8, (id&0xff) as u8]);
         salt.extend_from_slice(block);
-        pbkdf2(&mut mac, salt.as_slice(), 2500u32 << (iteration_exponent as u32), output);
+        pbkdf2(&mut mac, salt.as_slice(), ((BASE_ITERATION_COUNT/4) as u32) << (iteration_exponent as u32), output);
     }
 
     const EXP:[u8;255] = [1, 3, 5, 15, 17, 51, 85, 255, 26, 46, 114, 150, 161, 248, 19, 53, 95, 225, 56, 72, 216, 115, 149, 164, 247, 2, 6, 10, 30, 34, 102, 170, 229, 52, 92, 228, 55, 89, 235, 38, 106, 190, 217, 112, 144, 171, 230, 49, 83, 245, 4, 12, 20, 60, 68, 204, 79, 209, 104, 184, 211, 110, 178, 205, 76, 212, 103, 169, 224, 59, 77, 215, 98, 166, 241, 8, 24, 40, 120, 136, 131, 158, 185, 208, 107, 189, 220, 127, 129, 152, 179, 206, 73, 219, 118, 154, 181, 196, 87, 249, 16, 48, 80, 240, 11, 29, 39, 105, 187, 214, 97, 163, 254, 25, 43, 125, 135, 146, 173, 236, 47, 113, 147, 174, 233, 32, 96, 160, 251, 22, 58, 78, 210, 109, 183, 194, 93, 231, 50, 86, 250, 21, 63, 65, 195, 94, 226, 61, 71, 201, 64, 192, 91, 237, 44, 116, 156, 191, 218, 117, 159, 186, 213, 100, 172, 239, 42, 126, 130, 157, 188, 223, 122, 142, 137, 128, 155, 182, 193, 88, 232, 35, 101, 175, 234, 37, 111, 177, 200, 67, 197, 84, 252, 31, 33, 99, 165, 244, 7, 9, 27, 45, 119, 153, 176, 203, 70, 202, 69, 207, 74, 222, 121, 139, 134, 145, 168, 227, 62, 66, 198, 81, 243, 14, 18, 54, 90, 238, 41, 123, 141, 140, 143, 138, 133, 148, 167, 242, 13, 23, 57, 75, 221, 124, 132, 151, 162, 253, 28, 36, 108, 180, 199, 82, 246, ];
@@ -283,23 +320,30 @@ impl Share {
     /// create from human readable representation
     pub fn from_mnemonic(mnemonic: &str) -> Result<Share, Error> {
         let words = Self::mnemonic_to_words(mnemonic)?;
-        if words.len() < 20 {
+        if words.len() < MIN_MNEMONIC_LENGTH_WORDS {
             return Err(Error::Mnemonic("key share mnemonic must be at least 20 words"));
-        }
-        let padding_len = 10*(words.len() - 4)%16;
-        if padding_len > 8 {
-            return Err(Error::Unsupported("Invalid mnemonic length"));
         }
         if Self::checksum(words.as_slice()) != 1 {
             return Err(Error::Mnemonic("checksum failed"));
         }
-        let value = Self::words_to_bytes(&words[4 .. words.len()-3]);
-        let prefix = Self::words_to_bytes(&words[..4]);
+        let padded_value = Self::words_to_bytes(&words[ID_EXP_LENGTH_WORDS+2 .. words.len()-CHECKSUM_LENGTH_WORDS]);
+        let padding = (RADIX_BITS*(words.len()-METADATA_LENGTH_WORDS))%16;
+        if padding > 8 {
+            return Err(Error::Mnemonic("incorrect mnmemonic length"));
+        }
+        let mut cursor = Cursor::new(padded_value.as_slice());
+        let mut reader = BitStreamReader::new(&mut cursor);
+        reader.read(padding as u8).unwrap();
+        let mut value = Vec::new();
+        while let Ok(b) = reader.read(8) {
+            value.push(b as u8);
+        }
+        let prefix = Self::words_to_bytes(&words[..ID_EXP_LENGTH_WORDS+2]);
         let mut cursor = Cursor::new(&prefix);
         let mut reader = BitStreamReader::new(&mut cursor);
         Ok(Share {
-            id: reader.read(15).unwrap() as u16,
-            iteration_exponent: reader.read(5).unwrap() as u8,
+            id: reader.read(ID_LENGTH_BITS as u8).unwrap() as u16,
+            iteration_exponent: reader.read(ITERATION_EXP_LENGTH_BITS as u8).unwrap() as u8,
             group_index: reader.read(4).unwrap() as u8,
             group_threshold: (reader.read(4).unwrap() + 1) as u8,
             group_count: (reader.read(4).unwrap() + 1) as u8,
@@ -321,7 +365,16 @@ impl Share {
         writer.write(self.member_index as u64, 4).unwrap();
         writer.write((self.member_threshold - 1) as u64, 4).unwrap();
         writer.flush().unwrap();
-        bytes.extend_from_slice(self.value.as_slice());
+        let value_word_count = (self.value.len()*8 + RADIX_BITS - 1) / RADIX_BITS;
+        let padding = value_word_count*10 - self.value.len()*8;
+        let mut padded_value = Vec::new();
+        let mut writer = BitStreamWriter::new(&mut padded_value);
+        writer.write(0, padding as u8).unwrap();
+        for v in &self.value {
+            writer.write(*v as u64, 8).unwrap();
+        }
+        writer.flush().unwrap();
+        bytes.extend_from_slice(padded_value.as_slice());
         let mut words = Self::bytes_to_words(&bytes[..]);
         words.push(0);
         words.push(0);
@@ -329,7 +382,7 @@ impl Share {
         let chk = Self::checksum(words.as_slice()) ^ 1;
         let len = words.len();
         for i in 0..3 {
-            words[len - 3 + i] = ((chk >> (10 * (2 - i as u32))) & 1023) as u16;
+            words[len - 3 + i] = ((chk >> (RADIX_BITS as u32 * (2 - i as u32))) & 1023) as u16;
         }
         Self::words_to_mnemonic(&words[..])
     }
@@ -339,7 +392,7 @@ impl Share {
         let mut words = Vec::new();
         let mut cursor = Cursor::new(bytes);
         let mut reader = BitStreamReader::new(&mut cursor);
-        while let Ok(w) = reader.read(10) {
+        while let Ok(w) = reader.read(RADIX_BITS as u8) {
             words.push(w as u16);
         }
         words
@@ -398,12 +451,10 @@ impl Share {
             0x3F3F120,
         ];
 
-        const SALT :[u16;6] = ['s' as u16, 'h' as u16, 'a' as u16, 'm' as u16, 'i' as u16, 'r' as u16];
-
         let mut chk = 1u32;
-        for v in SALT.iter().chain(values.iter()) {
+        for v in CUSTOMIZATION_STRING.iter().map(|c| *c as u16).chain(values.iter().cloned()) {
             let b = chk >> 20;
-            chk = ((chk & 0xFFFFF) << 10) ^ (*v as u32);
+            chk = ((chk & 0xFFFFF) << 10) ^ (v as u32);
             for i in 0..10 {
                 if (b >> i) & 1 != 0 {
                     chk ^= GEN[i as usize];
@@ -423,6 +474,7 @@ mod test {
         let m = "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision keyboard";
         let sss = Share::from_mnemonic(m).unwrap();
         assert_eq!(sss.to_mnemonic().as_str(), m);
+        assert_eq!(ShamirSecretSharing::combine(&[sss], Some("TREZOR")).unwrap(), hex::decode("bb54aac4b89dc868ba37d9cc21b2cece").unwrap());
         let m =  "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision kidney";
         assert!(Share::from_mnemonic(m).is_err());
     }
@@ -436,6 +488,13 @@ mod test {
         assert_eq!(ShamirSecretSharing::combine(shares.as_slice(), Some("whatever")).unwrap(), secret);
         let shares = ShamirSecretSharing::generate(1, &[(1,1)], &secret[..], Some("whatever"), 0).unwrap();
         assert_ne!(ShamirSecretSharing::combine(shares.as_slice(), Some("somewhat")).unwrap(), secret);
+    }
+
+    #[test]
+    pub fn test_recombine() {
+        let secret = [27u8; 16];
+        let shares = ShamirSecretSharing::generate(1, &[(2,2)], &secret[..], None, 0).unwrap();
+        assert_eq!(ShamirSecretSharing::combine(shares.as_slice(), None).unwrap(), secret);
     }
 
     #[test]
@@ -472,7 +531,7 @@ mod test {
     }
 }
 
-const WORDS: [&str; 1024] = [
+const WORDS: [&str; RADIX] = [
 "academic",
 "acid",
 "acne",
