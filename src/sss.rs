@@ -23,24 +23,99 @@ use std::io::Cursor;
 use crypto::pbkdf2::pbkdf2;
 use crypto::sha2::Sha256;
 use crypto::hmac::Hmac;
-use std::ops::Range;
 use rand::{thread_rng, RngCore};
 use crypto::mac::Mac;
-use bitcoin::bech32::ToBase32;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 
 pub struct ShamirSecretSharing {
 }
 
 impl ShamirSecretSharing {
-    pub fn generate (group_treshold: u8, groups: &[(u8, u8)], secret: Vec<u8>, passphrase: Option<&str>, iteration_exponent: u8) -> Result<Vec<Share>, Error> {
+    pub fn generate (group_threshold: u8, groups: &[(u8, u8)], secret: &[u8], passphrase: Option<&str>, iteration_exponent: u8) -> Result<Vec<Share>, Error> {
         if secret.len() < 16 || secret.len() % 2 != 0 {
             return Err(Error::Unsupported("master key entropy must be at least 128 bits and multiple of 16 bits"));
         }
-        Ok(Vec::new())
+        if group_threshold > 16 {
+            return Err(Error::Unsupported("more than 16 groups are not supported"));
+        }
+        if group_threshold as usize > groups.len() {
+            return Err(Error::Unsupported("group threshold should not exceed number of groups"));
+        }
+        if groups.iter().any(|(threshold, count)| *threshold == 1 && *count > 1) {
+            return Err(Error::Unsupported("can only generate one share for threshold = 1"));
+        }
+        if groups.iter().any(|(threshold, count)| *threshold > *count) {
+            return Err(Error::Unsupported("number of shares must not be less than threshold"));
+        }
+        let id = (thread_rng().next_u32() % 0x7fff) as u16;
+        let group_shares = Self::split_secret(group_threshold, groups.len() as u8,
+                                              Self::encrypt(id, iteration_exponent, secret, passphrase)?.as_slice())?;
+        let mut shares = Vec::new();
+        for (i, share) in &group_shares {
+            for (threshold, count) in groups {
+                for (j, value) in Self::split_secret(*threshold, *count, share)? {
+                    shares.push(Share{id, value, iteration_exponent, group_count: groups.len() as u8,
+                        group_index: *i, group_threshold, member_index: j, member_threshold: *threshold});
+                }
+            }
+        }
+        Ok(shares)
     }
 
-    fn recover_secret(threshold: u8, shares: &Vec<(u8, Vec<u8>)>) -> Result<Vec<u8>, Error> {
+    pub fn combine(shares: &[Share], passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
+        let (id, iteration_exponent, group_threshold, groups) = Self::preprocess(shares)?;
+        if groups.len() < group_threshold as usize {
+            return Err(Error::Unsupported("need shares from more groups to reconstruct secret"));
+        }
+        if groups.len() != group_threshold as usize {
+            return Err(Error::Unsupported("shares from too many groups"));
+        }
+        if groups.iter().any(|(_, group)| group[0].0 as usize != group.len()) {
+            return Err(Error::Unsupported("for every group number of member shares should match member threshold"));
+        }
+        if groups.iter().any(|(_, g)|
+            g.iter().fold(HashSet::new(), |mut a, v| {a.insert(v.0); a}).len() > 1) {
+            return Err(Error::Unsupported("member threshold must be the same within a group"));
+        }
+        let mut group_secrets = Vec::new();
+        for (group_index, group) in groups {
+            group_secrets.push((group_index, Self::recover_secret(group[0].0, group.iter().map(|(_,m, v)| (*m, v.clone())).collect::<Vec<_>>().as_slice())?));
+        }
+        Self::decrypt(id, iteration_exponent, Self::recover_secret(group_threshold, group_secrets.as_slice())?.as_slice(), passphrase)
+    }
+
+    fn preprocess (shares: &[Share]) -> Result<(u16, u8, u8, HashMap<u8, Vec<(u8, u8, Vec<u8>)>>), Error> {
+        if shares.len () < 1 {
+            return Err(Error::Unsupported("need at least one share to reconstruct secret"));
+        }
+        let identifiers = shares.iter().map(|s| s.id).collect::<HashSet<_>>();
+        if identifiers.len () > 1 {
+            return Err(Error::Unsupported("shares do not belong to the same secret"));
+        }
+        let iteration_exponents = shares.iter().map(|s| s.iteration_exponent).collect::<HashSet<_>>();
+        if identifiers.len () > 1 {
+            return Err(Error::Unsupported("shares do not have the same iteration exponent"));
+        }
+        let group_thresholds = shares.iter().map(|s| s.group_threshold).collect::<HashSet<_>>();
+        if group_thresholds.len () > 1 {
+            return Err(Error::Unsupported("shares do not have the same group threshold"));
+        }
+        let group_counts = shares.iter().map(|s| s.group_count).collect::<HashSet<_>>();
+        if group_counts.len () > 1 {
+            return Err(Error::Unsupported("shares do not have the same group count"));
+        }
+        let mut groups = HashMap::new();
+        for share in shares {
+            groups.entry(share.group_index).or_insert(Vec::new())
+                .push((share.member_threshold, share.member_index, share.value.clone()));
+        }
+        return Ok((identifiers.iter().next().unwrap().clone(),
+                iteration_exponents.iter().next().unwrap().clone(),
+                group_thresholds.iter().next().unwrap().clone(),
+                groups))
+    }
+
+    fn recover_secret(threshold: u8, shares: &[(u8, Vec<u8>)]) -> Result<Vec<u8>, Error> {
         if threshold == 1 {
             return Ok(shares[0].1.clone());
         }
@@ -98,7 +173,7 @@ impl ShamirSecretSharing {
         Ok(shares)
     }
 
-    fn interpolate(shares: &Vec<(u8, Vec<u8>)>, x: u8) -> Result<Vec<u8>, Error> {
+    fn interpolate(shares: &[(u8, Vec<u8>)], x: u8) -> Result<Vec<u8>, Error> {
         let x_coordinates = shares.iter().map(|(i, _)|*i).collect::<HashSet<_>>();
         if x_coordinates.len() != shares.len() {
             return Err(Error::Unsupported("need unique shares for interpolation"));
@@ -113,19 +188,18 @@ impl ShamirSecretSharing {
         if x_coordinates.contains(&x) {
             return Ok(shares.iter().find_map(|(i, v)| if *i == x {Some (v)} else {None}).unwrap().clone())
         }
-        let log_prod = shares.iter().map(|(i, _)| Self::LOG[(*i ^ x) as usize]).fold(0u16, |a, v| a + v as u16);
+        let log_prod = shares.iter().map(|(i, _)| Self::LOG[(*i ^ x) as usize]).fold(0u8, |a, v| a.wrapping_add(v));
         let mut result = vec!(0u8; len);
         for (i, share) in shares {
             let log_basis = (
-                (log_prod
-                - Self::LOG[(*i ^ x) as usize] as u16
-                - shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0u16, |a, v| a + v as u16)
-                ) % 255
-            ) as u8;
+                log_prod
+                    .wrapping_sub(Self::LOG[(*i ^ x) as usize])
+                    .wrapping_sub(shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0u8, |a, v| a.wrapping_add(v)))
+            ) % 255;
             result.iter_mut().zip(share.iter())
                 .for_each(|(r, s)|
                     *r ^= if *s != 0 {
-                        Self::EXP[((Self::LOG[*s as usize] + log_basis) % 255) as usize]
+                        Self::EXP[((Self::LOG[*s as usize].wrapping_add(log_basis)) % 255) as usize]
                     } else {0});
         }
         Ok(result)
@@ -193,6 +267,7 @@ impl ShamirSecretSharing {
     const LOG:[u8;256] = [0, 0, 25, 1, 50, 2, 26, 198, 75, 199, 27, 104, 51, 238, 223, 3, 100, 4, 224, 14, 52, 141, 129, 239, 76, 113, 8, 200, 248, 105, 28, 193, 125, 194, 29, 181, 249, 185, 39, 106, 77, 228, 166, 114, 154, 201, 9, 120, 101, 47, 138, 5, 33, 15, 225, 36, 18, 240, 130, 69, 53, 147, 218, 142, 150, 143, 219, 189, 54, 208, 206, 148, 19, 92, 210, 241, 64, 70, 131, 56, 102, 221, 253, 48, 191, 6, 139, 98, 179, 37, 226, 152, 34, 136, 145, 16, 126, 110, 72, 195, 163, 182, 30, 66, 58, 107, 40, 84, 250, 133, 61, 186, 43, 121, 10, 21, 155, 159, 94, 202, 78, 212, 172, 229, 243, 115, 167, 87, 175, 88, 168, 80, 244, 234, 214, 116, 79, 174, 233, 213, 231, 230, 173, 232, 44, 215, 117, 122, 235, 22, 11, 245, 89, 203, 95, 176, 156, 169, 81, 160, 127, 12, 246, 111, 23, 196, 73, 236, 216, 67, 31, 45, 164, 118, 123, 183, 204, 187, 62, 90, 251, 96, 177, 134, 59, 82, 161, 108, 170, 85, 41, 157, 151, 178, 135, 144, 97, 190, 220, 252, 188, 149, 207, 205, 55, 63, 91, 209, 83, 57, 132, 60, 65, 162, 109, 71, 20, 42, 158, 93, 86, 242, 211, 171, 68, 17, 146, 217, 35, 32, 46, 137, 180, 124, 184, 38, 119, 153, 227, 165, 103, 74, 237, 222, 197, 49, 254, 24, 13, 99, 140, 128, 192, 247, 112, 7, ];
 }
 
+#[derive(Debug)]
 pub struct Share {
     pub id: u16,
     pub iteration_exponent: u8,
@@ -340,8 +415,7 @@ impl Share {
 }
 
 mod test {
-    use super::{ShamirSecretSharing, Share};
-    use sss::WORDS;
+    use super::{ShamirSecretSharing, Share, WORDS};
     use std::collections::HashSet;
 
     #[test]
@@ -351,8 +425,17 @@ mod test {
         assert_eq!(sss.to_mnemonic().as_str(), m);
         let m =  "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision kidney";
         assert!(Share::from_mnemonic(m).is_err());
-        let m = "duckling enlarge academic academic email result length solution fridge kidney coal piece deal husband erode duke ajar music cargo fitness";
-        assert!(Share::from_mnemonic(m).is_err());
+    }
+
+    #[test]
+    pub fn test_encryption() {
+        let secret = [27u8; 16];
+        let shares = ShamirSecretSharing::generate(1, &[(1,1)], &secret[..], None, 0).unwrap();
+        assert_eq!(ShamirSecretSharing::combine(shares.as_slice(), None).unwrap(), secret);
+        let shares = ShamirSecretSharing::generate(1, &[(1,1)], &secret[..], Some("whatever"), 0).unwrap();
+        assert_eq!(ShamirSecretSharing::combine(shares.as_slice(), Some("whatever")).unwrap(), secret);
+        let shares = ShamirSecretSharing::generate(1, &[(1,1)], &secret[..], Some("whatever"), 0).unwrap();
+        assert_ne!(ShamirSecretSharing::combine(shares.as_slice(), Some("somewhat")).unwrap(), secret);
     }
 
     #[test]
