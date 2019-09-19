@@ -221,18 +221,18 @@ impl ShamirSecretSharing {
         if x_coordinates.contains(&x) {
             return Ok(shares.iter().find_map(|(i, v)| if *i == x {Some (v)} else {None}).unwrap().clone())
         }
-        let log_prod = shares.iter().map(|(i, _)| Self::LOG[(*i ^ x) as usize]).fold(0u8, |a, v| a.wrapping_add(v));
+        let log_prod = shares.iter().map(|(i, _)| Self::LOG[(*i ^ x) as usize]).fold(0i16, |a, v| a + v as i16);
         let mut result = vec!(0u8; len);
         for (i, share) in shares {
             let log_basis = (
                 log_prod
-                    .wrapping_sub(Self::LOG[(*i ^ x) as usize])
-                    .wrapping_sub(shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0u8, |a, v| a.wrapping_add(v)))
+                    - Self::LOG[(*i ^ x) as usize] as i16
+                    - shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0i16, |a, v| a + v as i16) as i16
             ) % 255;
             result.iter_mut().zip(share.iter())
                 .for_each(|(r, s)|
                     *r ^= if *s != 0 {
-                        Self::EXP[((Self::LOG[*s as usize].wrapping_add(log_basis)) % 255) as usize]
+                        Self::EXP[((Self::LOG[*s as usize] as i16 + log_basis) % 255) as usize]
                     } else {0});
         }
         Ok(result)
