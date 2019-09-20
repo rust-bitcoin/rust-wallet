@@ -84,12 +84,11 @@ impl ShamirSecretSharing {
         let group_shares = Self::split_secret(group_threshold, groups.len() as u8,
                                               Self::encrypt(id, iteration_exponent, secret, passphrase)?.as_slice())?;
         let mut shares = Vec::new();
-        for (i, share) in &group_shares {
-            for (threshold, count) in groups {
-                for (j, value) in Self::split_secret(*threshold, *count, share)? {
-                    shares.push(Share {id, value, iteration_exponent, group_count: groups.len() as u8,
-                        group_index: *i, group_threshold, member_index: j, member_threshold: *threshold});
-                }
+        for (group_index, share) in group_shares {
+            let (member_threshold, count) = groups[group_index as usize];
+            for (member_index, value) in Self::split_secret(member_threshold, count, share.as_slice())? {
+                shares.push(Share {id, value, iteration_exponent, group_count: groups.len() as u8,
+                    group_index, group_threshold, member_index, member_threshold});
             }
         }
         Ok(shares)
@@ -221,19 +220,23 @@ impl ShamirSecretSharing {
         if x_coordinates.contains(&x) {
             return Ok(shares.iter().find_map(|(i, v)| if *i == x {Some (v.clone())} else {None}).unwrap())
         }
+
+        #[inline]
+        fn mod_255(n: i16) -> i16 {
+            (if n < 0 { 255 + n } else { n }) % 255
+        }
+
         let log_prod = shares.iter().map(|(i, _)| Self::LOG[(*i ^ x) as usize]).fold(0i16, |a, v| a + v as i16);
         let mut result = vec!(0u8; len);
         for (i, share) in shares {
-            let basis = log_prod
+            let log_basis = mod_255(
+                log_prod
                     - Self::LOG[(*i ^ x) as usize] as i16
-                    - shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0i16, |a, v| a + v as i16) as i16;
-            let log_basis = if basis < 0 { 255 + basis } else { basis } % 255;
+                    - shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0i16, |a, v| a + v as i16) as i16);
             result.iter_mut().zip(share.iter())
                 .for_each(|(r, s)|
                     *r ^= if *s != 0 {
-                        let ls = Self::LOG[*s as usize] as i16 + log_basis;
-                        let pls = if ls < 0 { 255 + ls } else { ls } % 255;
-                        Self::EXP[pls as usize]
+                         Self::EXP[mod_255(Self::LOG[*s as usize] as i16 + log_basis) as usize]
                     } else {0});
         }
         Ok(result)
@@ -492,11 +495,29 @@ mod test {
     }
 
     #[test]
-    pub fn test_recombine() {
+    pub fn test_n_of_n_recombine() {
         let secret = [27u8; 16];
-        for n in 1..16 {
-            let shares = ShamirSecretSharing::generate(1, &[(n,n)], &secret[..], None, 0).unwrap();
+        for n in 1 .. 16 {
+            println!("1, ({},{})", n, n);
+            let shares = ShamirSecretSharing::generate(1, &[(n, n)], &secret[..], None, 0).unwrap();
             assert_eq!(ShamirSecretSharing::combine(shares.as_slice(), None).unwrap(), secret);
+        }
+        for n in 1 .. 16 {
+            println!("{}, [(1,1) ...]", n);
+            let shares = ShamirSecretSharing::generate(n, vec!((1, 1);n as usize).as_slice(), &secret[..], None, 0).unwrap();
+            assert_eq!(ShamirSecretSharing::combine(shares.as_slice(), None).unwrap(), secret);
+        }
+    }
+
+    #[test]
+    pub fn test_m_of_n_recombine() {
+        let secret = [27u8; 16];
+        for n in 3 .. 16 {
+            for m in 2..n {
+                println!("1, ({},{})", m, n);
+                let shares = ShamirSecretSharing::generate(1, &[(m, n)], &secret[..], None, 0).unwrap();
+                assert_eq!(ShamirSecretSharing::combine(&shares[.. (m as usize)], None).unwrap(), secret);
+            }
         }
     }
 
