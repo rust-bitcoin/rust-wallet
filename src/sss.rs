@@ -80,7 +80,7 @@ impl ShamirSecretSharing {
         if groups.iter().any(|(threshold, count)| *threshold > *count) {
             return Err(Error::Unsupported("number of shares must not be less than threshold"));
         }
-        let id = (thread_rng().next_u32() % ((2^(ID_LENGTH_BITS+1)-1) as u32)) as u16;
+        let id = (thread_rng().next_u32() % (((1<<(ID_LENGTH_BITS+1))-1) as u32)) as u16;
         let group_shares = Self::split_secret(group_threshold, groups.len() as u8,
                                               Self::encrypt(id, iteration_exponent, secret, passphrase)?.as_slice())?;
         let mut shares = Vec::new();
@@ -162,15 +162,15 @@ impl ShamirSecretSharing {
 
     fn split_secret (threshold: u8, share_count: u8, shared_secret: &[u8]) -> Result<Vec<(u8, Vec<u8>)>, Error> {
         if threshold < 1 {
-            return Err(Error::Unsupported("sharing threashold must be > 1"));
-        }
-
-        if threshold > share_count {
-            return Err(Error::Unsupported("number of shares should be at least equal threshold"));
+            return Err(Error::Unsupported("sharing threshold must be > 1"));
         }
 
         if share_count > MAX_SHARE_COUNT {
             return Err(Error::Unsupported("too many shares"));
+        }
+
+        if threshold > share_count {
+            return Err(Error::Unsupported("number of shares should be at least equal threshold"));
         }
 
         let mut shares = Vec::new();
@@ -200,7 +200,7 @@ impl ShamirSecretSharing {
         base_shares.push((SECRET_INDEX as u8, shared_secret.to_vec()));
 
         for i in random_shares_count .. share_count {
-            shares.push((i, Self::interpolate(&base_shares, i)?));
+            shares.push((i, Self::interpolate(base_shares.as_slice(), i)?));
         }
 
         Ok(shares)
@@ -219,20 +219,21 @@ impl ShamirSecretSharing {
             return Err(Error::Unsupported("shares should have equal length"));
         }
         if x_coordinates.contains(&x) {
-            return Ok(shares.iter().find_map(|(i, v)| if *i == x {Some (v)} else {None}).unwrap().clone())
+            return Ok(shares.iter().find_map(|(i, v)| if *i == x {Some (v.clone())} else {None}).unwrap())
         }
         let log_prod = shares.iter().map(|(i, _)| Self::LOG[(*i ^ x) as usize]).fold(0i16, |a, v| a + v as i16);
         let mut result = vec!(0u8; len);
         for (i, share) in shares {
-            let log_basis = (
-                log_prod
+            let basis = log_prod
                     - Self::LOG[(*i ^ x) as usize] as i16
-                    - shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0i16, |a, v| a + v as i16) as i16
-            ) % 255;
+                    - shares.iter().map(|(j, _)| Self::LOG[(*j ^ *i) as usize]).fold(0i16, |a, v| a + v as i16) as i16;
+            let log_basis = if basis < 0 { 255 + basis } else { basis } % 255;
             result.iter_mut().zip(share.iter())
                 .for_each(|(r, s)|
                     *r ^= if *s != 0 {
-                        Self::EXP[((Self::LOG[*s as usize] as i16 + log_basis) % 255) as usize]
+                        let ls = Self::LOG[*s as usize] as i16 + log_basis;
+                        let pls = if ls < 0 { 255 + ls } else { ls } % 255;
+                        Self::EXP[pls as usize]
                     } else {0});
         }
         Ok(result)
@@ -493,8 +494,10 @@ mod test {
     #[test]
     pub fn test_recombine() {
         let secret = [27u8; 16];
-        let shares = ShamirSecretSharing::generate(1, &[(2,2)], &secret[..], None, 0).unwrap();
-        assert_eq!(ShamirSecretSharing::combine(shares.as_slice(), None).unwrap(), secret);
+        for n in 1..16 {
+            let shares = ShamirSecretSharing::generate(1, &[(n,n)], &secret[..], None, 0).unwrap();
+            assert_eq!(ShamirSecretSharing::combine(shares.as_slice(), None).unwrap(), secret);
+        }
     }
 
     #[test]
