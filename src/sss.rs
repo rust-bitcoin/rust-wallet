@@ -480,6 +480,7 @@ mod test {
     use super::{ShamirSecretSharing, Share, WORDS};
     use std::collections::HashSet;
     use serde_json::Value;
+    use rand::{thread_rng, Rng};
 
     #[test]
     pub fn test_encoding() {
@@ -489,6 +490,28 @@ mod test {
         assert_eq!(ShamirSecretSharing::combine(&[sss], Some("TREZOR")).unwrap(), hex::decode("bb54aac4b89dc868ba37d9cc21b2cece").unwrap());
         let m =  "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision kidney";
         assert!(Share::from_mnemonic(m).is_err());
+    }
+
+    #[test]
+    pub fn round_trips () {
+        let mut secret = [0u8; 32];
+        thread_rng().fill(&mut secret);
+        for n in 1..16 {
+            let shares = ShamirSecretSharing::generate(1, &[(n,n)], &secret[..], None, 0).unwrap();
+            assert_eq!(&secret[..], ShamirSecretSharing::combine(&shares, None).unwrap().as_slice());
+        }
+
+        for n in 2..5 {
+            let shares = ShamirSecretSharing::generate(n, vec![(1,1);n as usize].as_slice(), &secret[..], None, 0).unwrap();
+            assert_eq!(&secret[..], ShamirSecretSharing::combine(&shares, None).unwrap().as_slice());
+        }
+
+        for n in 3..6 {
+            for m in 2..4 {
+                let shares = ShamirSecretSharing::generate(1, vec![(m, n)].as_slice(), &secret[..], None, 0).unwrap();
+                assert_eq!(&secret[..], ShamirSecretSharing::combine(&shares[.. (m as usize)], None).unwrap().as_slice());
+            }
+        }
     }
 
     #[test]
