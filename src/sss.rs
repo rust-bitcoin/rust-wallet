@@ -81,12 +81,11 @@ impl ShamirSecretSharing {
             return Err(Error::Unsupported("number of shares must not be less than threshold"));
         }
         let id = (thread_rng().next_u32() % (((1<<(ID_LENGTH_BITS+1))-1) as u32)) as u16;
-        let group_shares = Self::split_secret(group_threshold, groups.len() as u8,
-                                              Self::encrypt(id, iteration_exponent, secret, passphrase)?.as_slice())?;
         let mut shares = Vec::new();
-        for (group_index, share) in group_shares {
+        for (group_index, group_share) in Self::split_secret(group_threshold, groups.len() as u8,
+                                                       Self::encrypt(id, iteration_exponent, secret, passphrase)?.as_slice())? {
             let (member_threshold, count) = groups[group_index as usize];
-            for (member_index, value) in Self::split_secret(member_threshold, count, share.as_slice())? {
+            for (member_index, value) in Self::split_secret(member_threshold, count, group_share.as_slice())? {
                 shares.push(Share {id, value, iteration_exponent, group_count: groups.len() as u8,
                     group_index, group_threshold, member_index, member_threshold});
             }
@@ -181,14 +180,13 @@ impl ShamirSecretSharing {
             return Ok(shares);
         }
 
-        let random_shares_count = share_count - 2;
+        let random_shares_count = std::cmp::max(threshold - 2, 0);
 
         for i in 0 .. random_shares_count {
             let mut share = vec!(0u8; shared_secret.len());
             thread_rng().fill_bytes(share.as_mut_slice());
             shares.push((i, share));
         }
-
 
         let mut base_shares = shares.clone();
         let mut random_part = vec!(0u8; shared_secret.len() - DIGEST_LENGTH_BYTES);
@@ -222,8 +220,11 @@ impl ShamirSecretSharing {
         }
 
         #[inline]
-        fn mod_255(n: i16) -> i16 {
-            (if n < 0 { 255 + n } else { n }) % 255
+        fn mod_255(mut n: i16) -> i16 {
+            while n < 0 {
+                n += 255;
+            }
+            n % 255
         }
 
         let log_prod = shares.iter().map(|(i, _)| Self::LOG[(*i ^ x) as usize]).fold(0i16, |a, v| a + v as i16);
