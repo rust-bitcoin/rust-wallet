@@ -5,6 +5,8 @@ It uses BIP32 key derivation, BIP39 mnemonics and BIP44, BIP48, BIP84 key
 hierarchy which makes it compatible to TREZOR, Ledger and many other
 wallets.
 
+This library supports SLIP-0039 Shamir's Shared Secret Scheme as available in TREZOR Model T
+
 It supports legacy P2PKH, transitional P2SHWPKH and native segwit P2WPKH for single key signatures
 and native P2WSH for arbitrary sripts.
 
