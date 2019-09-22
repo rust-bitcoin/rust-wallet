@@ -19,12 +19,11 @@
 //! TREZOR compatible mnemonic in english
 //!
 use error::Error;
-use crypto::sha2::Sha256;
+use crypto::sha2::{Sha256, Sha512};
 use crypto::digest::Digest;
-use crypto::aes;
-use crypto::blockmodes;
-use crypto::buffer;
-use crypto::buffer::{BufferResult, WriteBuffer, ReadBuffer};
+use account::Seed;
+use crypto::hmac::Hmac;
+use crypto::pbkdf2::pbkdf2;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Mnemonic(Vec<&'static str>);
@@ -36,54 +35,14 @@ impl ToString for Mnemonic {
 }
 
 impl Mnemonic {
-    /// create a mnemonic for encrypted data
-    /// decryption algorithm: AES256(Sha256(passphrase), ECB, PKCS padding
-    pub fn decrypt (encrypted: &[u8], passphrase: &str) -> Result<Mnemonic, Error> {
-        let mut key = [0u8; 32];
-        let mut sha2 = Sha256::new();
-        sha2.input(passphrase.as_bytes());
-        sha2.result(&mut key);
-
-        let mut decrypted = Vec::new();
-        let mut reader = buffer::RefReadBuffer::new(encrypted);
-        let mut buffer = [0u8;1024];
-        let mut writer = buffer::RefWriteBuffer::new(&mut buffer);
-        let mut decryptor = aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::PkcsPadding{});
-        loop {
-            let result = decryptor.decrypt(&mut reader, &mut writer, true)?;
-            decrypted.extend(writer.take_read_buffer().take_remaining().iter().map(|i| *i));
-            match result {
-                BufferResult::BufferUnderflow => break,
-                BufferResult::BufferOverflow => {}
-            }
-        }
-
-        Ok(Mnemonic::from_str(String::from_utf8(decrypted).map_err(|_| Error::Passphrase)?.as_str())?)
-    }
-
-    /// encrypt mnemonic
-    /// encryption algorithm: AES256(Sha256(passphrase), ECB, PKCS padding
-    pub fn encrypt(&self, passphrase: &str) -> Result<Vec<u8>, Error> {
-        let mut key = [0u8; 32];
-        let mut sha2 = Sha256::new();
-        sha2.input(passphrase.as_bytes());
-        sha2.result(&mut key);
-
-        let words = self.to_string();
-        let mut encryptor = aes::ecb_encryptor(aes::KeySize::KeySize256, &key, blockmodes::PkcsPadding{});
-        let mut encrypted = Vec::new();
-        let mut reader = buffer::RefReadBuffer::new(words.as_bytes());
-        let mut buffer = [0u8; 1024];
-        let mut writer = buffer::RefWriteBuffer::new(&mut buffer);
-        loop {
-            let result = encryptor.encrypt(&mut reader, &mut writer, true)?;
-            encrypted.extend(writer.take_read_buffer().take_remaining().iter().map(|i| *i));
-            match result {
-                BufferResult::BufferUnderflow => break,
-                BufferResult::BufferOverflow => {}
-            }
-        }
-        Ok(encrypted)
+    /// create a seed from mnemonic
+    /// with optional passphrase for plausible deniability see BIP39
+    pub fn to_seed (&self, pd_passphrase: Option<&str>) -> Seed {
+        let mut mac = Hmac::new(Sha512::new(), self.to_string().as_bytes());
+        let mut output = [0u8; 64];
+        let passphrase = "mnemonic".to_owned() + pd_passphrase.unwrap_or("");
+        pbkdf2(&mut mac, passphrase.as_bytes(), 2048, &mut output);
+        Seed(output.to_vec())
     }
 
     pub fn iter(&self) -> impl Iterator<Item=&str> {
@@ -153,7 +112,6 @@ mod test {
     use serde_json::{Value};
     use hex::decode;
     use context::SecpContext;
-    use account::Seed;
 
     #[test]
     fn test_mnemonic () {
@@ -173,7 +131,7 @@ mod test {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_str().unwrap()).unwrap();
             let mnemonic = Mnemonic::from_str(values[1].as_str().unwrap()).unwrap();
-            let seed = Seed::new(&mnemonic, Some("TREZOR"));
+            let seed = mnemonic.to_seed(Some("TREZOR"));
             assert_eq!(mnemonic.to_string(), Mnemonic::new(data.as_slice()).unwrap().to_string());
             assert_eq!(seed.0, decode(values[2].as_str().unwrap()).unwrap());
 
@@ -191,15 +149,6 @@ mod test {
 
         assert!(Mnemonic::from_str("letter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_ok());
         assert!(Mnemonic::from_str("getter advice cage absurd amount doctor acoustic avoid letter advice cage above").is_err());
-    }
-
-    const PASSPHRASE: &str = "correct horse battery staple";
-
-    #[test]
-    pub fn test_encryption() {
-        let mnemonic = Mnemonic::from_str("letter advice cage absurd amount doctor acoustic avoid letter advice cage above").unwrap();
-        let encrypted = mnemonic.encrypt(PASSPHRASE).unwrap();
-        assert_eq!(Mnemonic::decrypt(encrypted.as_slice(), PASSPHRASE).unwrap(), mnemonic);
     }
 }
 

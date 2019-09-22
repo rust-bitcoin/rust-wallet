@@ -33,10 +33,15 @@ use bitcoin::util::bip32::ExtendedPubKey;
 use crate::mnemonic::Mnemonic;
 use rand::{thread_rng, RngCore};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crypto::hmac::Hmac;
-use crypto::sha2::Sha512;
-use crypto::pbkdf2::pbkdf2;
+use crypto::sha2::Sha256;
+use crypto::digest::Digest;
+use crypto::aes;
+use crypto::blockmodes;
+use crypto::buffer;
+use crypto::buffer::{BufferResult, WriteBuffer, ReadBuffer};
+
 use std::collections::HashMap;
+use sss::{Share, ShamirSecretSharing};
 
 /// chose your security level
 #[derive(Copy, Clone)]
@@ -64,8 +69,8 @@ impl MasterAccount {
         let mut rng = thread_rng();
         rng.fill_bytes(random.as_mut_slice());
         let mnemonic = Mnemonic::new(&random)?;
-        let encrypted = mnemonic.encrypt(passphrase)?;
-        let seed = Seed::new(&mnemonic, pd_passphrase);
+        let seed = mnemonic.to_seed(pd_passphrase);
+        let encrypted = seed.encrypt(passphrase)?;
         let master_key = context.master_private_key(network, &seed)?;
         let public_master_key = context.extended_public_from_private(&master_key);
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -83,19 +88,34 @@ impl MasterAccount {
         MasterAccount { master_public: public_master_key, encrypted: Vec::new(), accounts: HashMap::new(), birth }
     }
 
-    /// Restore from mnemonic
+    /// Restore from BIP39 mnemonic
     pub fn from_mnemonic(mnemonic: &Mnemonic, birth: u64, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, Error> {
+        let seed = mnemonic.to_seed(pd_passphrase);
+        Self::from_seed(&seed, birth, network, passphrase)
+    }
+
+    /// Restore from Shamir's Secret Shares (SLIP-0039)
+    pub fn from_shares(shares: &[Share], birth: u64, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, Error> {
+        let seed = ShamirSecretSharing::combine(shares, pd_passphrase)?;
+        Self::from_seed(&seed, birth, network, passphrase)
+    }
+
+    pub fn from_seed(seed: &Seed, birth: u64, network: Network, passphrase: &str) -> Result<MasterAccount, Error> {
         let context = SecpContext::new();
-        let encrypted = mnemonic.encrypt(passphrase)?;
-        let seed = Seed::new(&mnemonic, pd_passphrase);
+        let encrypted = seed.encrypt(passphrase)?;
         let master_key = context.master_private_key(network, &seed)?;
         let public_master_key = context.extended_public_from_private(&master_key);
         Ok(MasterAccount { master_public: public_master_key, encrypted, accounts: HashMap::new(), birth })
     }
 
-    /// get the mnemonic (human readable) representation of the master key
-    pub fn mnemonic (&self, passphrase: &str) -> Result<Mnemonic, Error> {
-        Ok(Mnemonic::decrypt(&self.encrypted, passphrase)?)
+    pub fn seed(&self, network: Network, passphrase: &str) -> Result<Seed, Error> {
+        let context = SecpContext::new();
+        let seed = Seed::decrypt(self.encrypted.as_slice(), passphrase)?;
+        let master_key = context.master_private_key(network, &seed)?;
+        if self.master_public != context.extended_public_from_private(&master_key) {
+            return Err(Error::Passphrase);
+        }
+        Ok(seed)
     }
 
     pub fn master_public (&self) ->&ExtendedPubKey {
@@ -157,10 +177,10 @@ pub struct Unlocker {
 impl Unlocker {
     /// decrypt encrypted seed of a master account
     /// check result if master_public is provided
-    pub fn new (encrypted: &[u8], passphrase: &str, pd_passphrase: Option<&str>, network: Network, master_public: Option<&ExtendedPubKey>) -> Result<Unlocker, Error>{
-        let mnemonic = Mnemonic::decrypt (encrypted, passphrase)?;
+    pub fn new (encrypted: &[u8], passphrase: &str, network: Network, master_public: Option<&ExtendedPubKey>) -> Result<Unlocker, Error>{
+        let seed = Seed::decrypt (encrypted, passphrase)?;
         let context = Arc::new(SecpContext::new());
-        let master_private = context.master_private_key(network, &Seed::new(&mnemonic, pd_passphrase))?;
+        let master_private = context.master_private_key(network, &seed)?;
         if let Some(master_public) = master_public {
             if network != master_public.network {
                 return Err(Error::Network);
@@ -172,8 +192,8 @@ impl Unlocker {
         Ok(Unlocker{master_private, network, context, cached: HashMap::new()})
     }
 
-    pub fn new_for_master(master: &MasterAccount, passphrase: &str, pd_passphrase: Option<&str>) -> Result<Unlocker, Error> {
-        Self::new(master.encrypted(), passphrase, pd_passphrase, master.master_public.network, Some(&master.master_public))
+    pub fn new_for_master(master: &MasterAccount, passphrase: &str) -> Result<Unlocker, Error> {
+        Self::new(master.encrypted(), passphrase, master.master_public.network, Some(&master.master_public))
     }
 
     pub fn master_private (&self) -> &ExtendedPrivKey {
@@ -536,17 +556,57 @@ impl InstantiatedKey {
 }
 
 /// seed of the master key
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Seed(pub Vec<u8>);
 
 impl Seed {
-    /// create a seed from mnemonic
-    /// with optional passphrase for plausible deniability see BIP39
-    pub fn new(mnemonic: &Mnemonic, pd_passphrase: Option<&str>) -> Seed {
-        let mut mac = Hmac::new(Sha512::new(), mnemonic.to_string().as_bytes());
-        let mut output = [0u8; 64];
-        let passphrase = "mnemonic".to_owned() + pd_passphrase.unwrap_or("");
-        pbkdf2(&mut mac, passphrase.as_bytes(), 2048, &mut output);
-        Seed(output.to_vec())
+    /// encrypt seed
+    /// encryption algorithm: AES256(Sha256(passphrase), ECB, PKCS padding
+    pub fn encrypt(&self, passphrase: &str) -> Result<Vec<u8>, Error> {
+        let mut key = [0u8; 32];
+        let mut sha2 = Sha256::new();
+        sha2.input(passphrase.as_bytes());
+        sha2.result(&mut key);
+
+        let mut encryptor = aes::ecb_encryptor(aes::KeySize::KeySize256, &key, blockmodes::PkcsPadding{});
+        let mut encrypted = Vec::new();
+        let mut reader = buffer::RefReadBuffer::new(self.0.as_slice());
+        let mut buffer = [0u8; 1024];
+        let mut writer = buffer::RefWriteBuffer::new(&mut buffer);
+        loop {
+            let result = encryptor.encrypt(&mut reader, &mut writer, true)?;
+            encrypted.extend(writer.take_read_buffer().take_remaining().iter().map(|i| *i));
+            match result {
+                BufferResult::BufferUnderflow => break,
+                BufferResult::BufferOverflow => {}
+            }
+        }
+        Ok(encrypted)
+    }
+
+    /// decrypt seed
+    /// decryption algorithm: AES256(Sha256(passphrase), ECB, PKCS padding
+    pub fn decrypt (encrypted: &[u8], passphrase: &str) -> Result<Seed, Error> {
+        let mut key = [0u8; 32];
+        let mut sha2 = Sha256::new();
+        sha2.input(passphrase.as_bytes());
+        sha2.result(&mut key);
+
+        let mut decrypted = Vec::new();
+        let mut reader = buffer::RefReadBuffer::new(encrypted);
+        let mut buffer = [0u8;1024];
+        let mut writer = buffer::RefWriteBuffer::new(&mut buffer);
+        let mut decryptor = aes::ecb_decryptor(aes::KeySize::KeySize256, &key, blockmodes::PkcsPadding{});
+        loop {
+            let result = decryptor.decrypt(&mut reader, &mut writer, true)?;
+            decrypted.extend(writer.take_read_buffer().take_remaining().iter().map(|i| *i));
+            match result {
+                BufferResult::BufferUnderflow => break,
+                BufferResult::BufferOverflow => {}
+            }
+        }
+
+        Ok(Seed(decrypted))
     }
 }
 
@@ -569,14 +629,23 @@ mod test {
 
     use serde_json::{Value};
     use hex::decode;
+    use rand::Rng;
 
     const PASSPHRASE: &str = "correct horse battery staple";
     const RBF: u32 = 0xffffffff - 2;
 
     #[test]
+    fn seed_encrypt_decrypt() {
+        let mut secret = [0u8;32];
+        thread_rng().fill(&mut secret);
+        let seed = Seed(secret.to_vec());
+        assert_eq!(Seed::decrypt(seed.encrypt("whatever").unwrap().as_slice(), "whatever").unwrap(), seed);
+    }
+
+    #[test]
     fn test_pkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2PKH, 0, 0, 10).unwrap();
         master.add_account(account);
         let account = master.get_mut((0,0)).unwrap();
@@ -636,7 +705,7 @@ mod test {
     #[test]
     fn test_wpkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap();
         master.add_account(account);
         let account = master.get_mut((0,0)).unwrap();
@@ -697,7 +766,7 @@ mod test {
     #[test]
     fn test_shwpkh() {
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
         master.add_account(account);
         let account = master.get_mut((0,0)).unwrap();
@@ -760,7 +829,7 @@ mod test {
     fn test_wsh() {
 
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
 
@@ -833,7 +902,7 @@ mod test {
     fn test_wsh_csv() {
 
         let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
 
@@ -936,7 +1005,7 @@ mod test {
         let words = "announce damage viable ticket engage curious yellow ten clock finish burden orient faculty rigid smile host offer affair suffer slogan mercy another switch park";
         let mnemonic = Mnemonic::from_str(words).unwrap();
         let master = MasterAccount::from_mnemonic(&mnemonic, 0, Network::Bitcoin, PASSPHRASE, None).unwrap();
-        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
         // this should be address of m/49'/0'/0'/0/0
         assert_eq!(account.get_key(0).unwrap().address.to_string(), "3L8V8mDQVUySGwCqiB2x8fdRRMGWyyF4YP");

@@ -267,10 +267,10 @@ mod test {
 
     fn new_master() -> MasterAccount {
         let mut master = MasterAccount::from_encrypted(
-            hex::decode("0e05ba48bb0fdc7285dc9498202aeee5e1777ac4f55072b30f15f6a8632ad0f3fde1c41d9e162dbe5d3153282eaebd081cf3b3312336fc56f5dd18a2df6ea48c1cdd11a1ed11281cd2e0f864f02e5bed5ab03326ed24e43b8a184acff9cb4e730db484e33f2b24295a97b2ca87871a69384eb64d4160ce8b3e8b4d90234040970e531d4333a8979dbe533c2b2668bf43b6607b2d24c5b42765ebfdd075fd173c").unwrap().as_slice(),
-            ExtendedPubKey::from_str("tpubD6NzVbkrYhZ4XKz4vgwBmnnVmA7EgWhnXvimQ4krq94yUgcSSbroi4uC1xbZ3UGMxG9M2utmaPjdpMrWW2uKRY9Mj4DZWrrY8M4pry8shsK").unwrap(),
+            hex::decode("e541bc73d9990b290cc4a8d8ff4592183171d1808a32695b1835aa3c12f50f34849a0dc5b730c507f19f22af393b5e5453e0974977922dbba513dadf81d364d8e204209ea02af35693b49b3b09191f01").unwrap().as_slice(),
+            ExtendedPubKey::from_str("tpubD6NzVbkrYhZ4YUqaTmpewwbvSoA4dkwzGzvwGcUbwbRyu8i6dCSroCsvFmC6qzQgJxddMfA6Mg8r6XmkJVhQ8ihAWzfRBYTG5o28AC5HWX2").unwrap(),
             1567260002);
-        let mut unlocker = Unlocker::new_for_master(&master, "whatever", None).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, "whatever").unwrap();
         master.add_account(Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap());
         master
     }

@@ -26,6 +26,7 @@ use crypto::hmac::Hmac;
 use rand::{thread_rng, RngCore};
 use crypto::mac::Mac;
 use std::collections::{HashSet, HashMap};
+use account::Seed;
 
 const RADIX_BITS: usize = 10; // The length of the radix in bits.
 
@@ -64,7 +65,8 @@ const DIGEST_INDEX: usize = 254; // The index of the share containing the digest
 pub struct ShamirSecretSharing {}
 
 impl ShamirSecretSharing {
-    pub fn generate (group_threshold: u8, groups: &[(u8, u8)], secret: &[u8], passphrase: Option<&str>, iteration_exponent: u8) -> Result<Vec<Share>, Error> {
+    pub fn generate (group_threshold: u8, groups: &[(u8, u8)], seed: &Seed, pd_passphrase: Option<&str>, iteration_exponent: u8) -> Result<Vec<Share>, Error> {
+        let secret = seed.0.as_slice();
         if secret.len() * 8 < MIN_STRENGTH_BITS || secret.len() % 2 != 0 {
             return Err(Error::Unsupported("master key entropy must be at least 128 bits and multiple of 16 bits"));
         }
@@ -83,7 +85,7 @@ impl ShamirSecretSharing {
         let id = (thread_rng().next_u32() % (((1<<(ID_LENGTH_BITS+1))-1) as u32)) as u16;
         let mut shares = Vec::new();
         for (group_index, group_share) in Self::split_secret(group_threshold, groups.len() as u8,
-                                                       Self::encrypt(id, iteration_exponent, secret, passphrase)?.as_slice())? {
+                                                       Self::encrypt(id, iteration_exponent, secret, pd_passphrase)?.as_slice())? {
             let (member_threshold, count) = groups[group_index as usize];
             for (member_index, value) in Self::split_secret(member_threshold, count, group_share.as_slice())? {
                 shares.push(Share {id, value, iteration_exponent, group_count: groups.len() as u8,
@@ -93,7 +95,7 @@ impl ShamirSecretSharing {
         Ok(shares)
     }
 
-    pub fn combine(shares: &[Share], passphrase: Option<&str>) -> Result<Vec<u8>, Error> {
+    pub fn combine(shares: &[Share], pd_passphrase: Option<&str>) -> Result<Seed, Error> {
         let (id, iteration_exponent, group_threshold, groups) = Self::preprocess(shares)?;
         if groups.len() < group_threshold as usize {
             return Err(Error::Unsupported("need shares from more groups to reconstruct secret"));
@@ -112,7 +114,7 @@ impl ShamirSecretSharing {
         for (group_index, group) in groups {
             group_secrets.push((group_index, Self::recover_secret(group[0].0, group.iter().map(|(_,m, v)| (*m, v.clone())).collect::<Vec<_>>().as_slice())?));
         }
-        Self::decrypt(id, iteration_exponent, Self::recover_secret(group_threshold, group_secrets.as_slice())?.as_slice(), passphrase)
+        Ok(Seed(Self::decrypt(id, iteration_exponent, Self::recover_secret(group_threshold, group_secrets.as_slice())?.as_slice(), pd_passphrase)?))
     }
 
     fn preprocess (shares: &[Share]) -> Result<(u16, u8, u8, HashMap<u8, Vec<(u8, u8, Vec<u8>)>>), Error> {
@@ -481,13 +483,14 @@ mod test {
     use std::collections::HashSet;
     use serde_json::Value;
     use rand::{thread_rng, Rng};
+    use account::Seed;
 
     #[test]
     pub fn test_encoding() {
         let m = "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision keyboard";
         let sss = Share::from_mnemonic(m).unwrap();
         assert_eq!(sss.to_mnemonic().as_str(), m);
-        assert_eq!(ShamirSecretSharing::combine(&[sss], Some("TREZOR")).unwrap(), hex::decode("bb54aac4b89dc868ba37d9cc21b2cece").unwrap());
+        assert_eq!(ShamirSecretSharing::combine(&[sss], Some("TREZOR")).unwrap().0, hex::decode("bb54aac4b89dc868ba37d9cc21b2cece").unwrap());
         let m =  "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision kidney";
         assert!(Share::from_mnemonic(m).is_err());
     }
@@ -496,20 +499,21 @@ mod test {
     pub fn round_trips () {
         let mut secret = [0u8; 32];
         thread_rng().fill(&mut secret);
+        let seed = Seed(secret.to_vec());
         for n in 1..16 {
-            let shares = ShamirSecretSharing::generate(1, &[(n,n)], &secret[..], None, 0).unwrap();
-            assert_eq!(&secret[..], ShamirSecretSharing::combine(&shares, None).unwrap().as_slice());
+            let shares = ShamirSecretSharing::generate(1, &[(n,n)], &seed, None, 0).unwrap();
+            assert_eq!(seed, ShamirSecretSharing::combine(&shares, None).unwrap());
         }
 
         for n in 2..5 {
-            let shares = ShamirSecretSharing::generate(n, vec![(1,1);n as usize].as_slice(), &secret[..], None, 0).unwrap();
-            assert_eq!(&secret[..], ShamirSecretSharing::combine(&shares, None).unwrap().as_slice());
+            let shares = ShamirSecretSharing::generate(n, vec![(1,1);n as usize].as_slice(), &seed, None, 0).unwrap();
+            assert_eq!(seed, ShamirSecretSharing::combine(&shares, None).unwrap());
         }
 
         for n in 3..6 {
             for m in 2..4 {
-                let shares = ShamirSecretSharing::generate(1, vec![(m, n)].as_slice(), &secret[..], None, 0).unwrap();
-                assert_eq!(&secret[..], ShamirSecretSharing::combine(&shares[.. (m as usize)], None).unwrap().as_slice());
+                let shares = ShamirSecretSharing::generate(1, vec![(m, n)].as_slice(), &seed, None, 0).unwrap();
+                assert_eq!(seed, ShamirSecretSharing::combine(&shares[.. (m as usize)], None).unwrap());
             }
         }
     }
@@ -565,7 +569,7 @@ mod test {
                 }
             } else {
                 let shares = values[1].as_array().unwrap().iter().map(|v| Share::from_mnemonic(v.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
-                assert_eq!(result, hex::encode(ShamirSecretSharing::combine(&shares, Some("TREZOR")).unwrap()));
+                assert_eq!(result, hex::encode(ShamirSecretSharing::combine(&shares, Some("TREZOR")).unwrap().0));
             }
         }
     }
