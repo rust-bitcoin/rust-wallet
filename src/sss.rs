@@ -425,7 +425,7 @@ impl Share {
     fn mnemonic_to_words(mnemonic: &str) -> Result<Vec<u16>, Error> {
         let mut words = Vec::new();
         for w in mnemonic.split(' ') {
-            if let Ok(w) = WORDS.binary_search(&w) {
+            if let Ok(w) = WORDS.binary_search_by(|probe| probe[..4].cmp(&w[..4])) {
                 words.push(w as u16);
             }
             else {
