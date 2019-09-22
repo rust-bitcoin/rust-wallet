@@ -62,14 +62,11 @@ pub struct MasterAccount {
 impl MasterAccount {
     /// create a new random master account
     /// the information that leads to private key is stored encrypted with passphrase
-    /// and the optional pd_passphrase (pd for plausible deniability)
-    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str, pd_passphrase: Option<&str>) -> Result<MasterAccount, Error> {
+    pub fn new (entropy: MasterKeyEntropy, network: Network, passphrase: &str) -> Result<MasterAccount, Error> {
         let context = SecpContext::new();
         let mut random = vec!(0u8; entropy as usize);
-        let mut rng = thread_rng();
-        rng.fill_bytes(random.as_mut_slice());
-        let mnemonic = Mnemonic::new(&random)?;
-        let seed = mnemonic.to_seed(pd_passphrase);
+        thread_rng().fill_bytes(random.as_mut_slice());;
+        let seed = Seed(random);
         let encrypted = seed.encrypt(passphrase)?;
         let master_key = context.master_private_key(network, &seed)?;
         let public_master_key = context.extended_public_from_private(&master_key);
@@ -644,7 +641,7 @@ mod test {
 
     #[test]
     fn test_pkh() {
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
         let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2PKH, 0, 0, 10).unwrap();
         master.add_account(account);
@@ -704,7 +701,7 @@ mod test {
 
     #[test]
     fn test_wpkh() {
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
         let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap();
         master.add_account(account);
@@ -765,7 +762,7 @@ mod test {
 
     #[test]
     fn test_shwpkh() {
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
         let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap();
         master.add_account(account);
@@ -828,7 +825,7 @@ mod test {
     #[test]
     fn test_wsh() {
 
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
         let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
@@ -901,7 +898,7 @@ mod test {
     #[test]
     fn test_wsh_csv() {
 
-        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+        let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
         let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
         let account = Account::new(&mut unlocker, AccountAddressType::P2WSH(4711), 0, 0, 0).unwrap();
         master.add_account(account);
