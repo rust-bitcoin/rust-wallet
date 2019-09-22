@@ -479,11 +479,25 @@ impl Share {
 
 #[cfg(test)]
 mod test {
+    use bitcoin::network::constants::Network;
     use super::{ShamirSecretSharing, Share, WORDS};
     use std::collections::HashSet;
     use serde_json::Value;
     use rand::{thread_rng, Rng};
-    use account::Seed;
+    use account::{Seed, MasterKeyEntropy, MasterAccount};
+
+    const PASSPHRASE: &str = "correct horse battery staple";
+
+    #[test]
+    pub fn reconstruct() {
+        let master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
+        let seed = master.seed(Network::Bitcoin, PASSPHRASE).unwrap();
+        let shares = ShamirSecretSharing::generate(1, &[(3,5)], &seed, None, 1).unwrap();
+        let reconstructed_seed = ShamirSecretSharing::combine(&shares[..3], None).unwrap();
+        let reconstructed_master = MasterAccount::from_seed(&reconstructed_seed, 0, Network::Bitcoin, PASSPHRASE).unwrap();
+        assert_eq!(master.master_public(), reconstructed_master.master_public());
+        assert_eq!(master.encrypted(), reconstructed_master.encrypted());
+    }
 
     #[test]
     pub fn test_encoding() {
