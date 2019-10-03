@@ -484,7 +484,9 @@ mod test {
     use std::collections::HashSet;
     use serde_json::Value;
     use rand::{thread_rng, Rng};
-    use account::{Seed, MasterKeyEntropy, MasterAccount};
+    use account::{Seed, MasterKeyEntropy, MasterAccount, Account, AccountAddressType, Unlocker};
+    use bitcoin::Address;
+    use std::str::FromStr;
 
     const PASSPHRASE: &str = "correct horse battery staple";
 
@@ -500,13 +502,16 @@ mod test {
     }
 
     #[test]
-    pub fn test_encoding() {
-        let m = "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision keyboard";
-        let sss = Share::from_mnemonic(m).unwrap();
-        assert_eq!(sss.to_mnemonic().as_str(), m);
-        assert_eq!(ShamirSecretSharing::combine(&[sss], Some("TREZOR")).unwrap().0, hex::decode("bb54aac4b89dc868ba37d9cc21b2cece").unwrap());
-        let m =  "duckling enlarge academic academic agency result length solution fridge kidney coal piece deal husband erode duke ajar critical decision kidney";
-        assert!(Share::from_mnemonic(m).is_err());
+    pub fn reconstruct_account() {
+        let shares = [
+            "column upstairs academic acid blue task loyalty dwarf trash election squeeze pipeline pharmacy fiber soldier already gross length acne guest",
+            "column upstairs academic always away perfect dynamic wrote bumpy olympic privacy satisfy fraction educate task twin animal physics bolt cage"
+        ].iter().map(|s| Share::from_mnemonic(s).unwrap()).collect::<Vec<_>>();
+        let seed = ShamirSecretSharing::combine(&shares[..], None).unwrap();
+        let mut master = MasterAccount::from_seed(&seed, 0, Network::Bitcoin, PASSPHRASE).unwrap();
+        let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
+        master.add_account(Account::new(&mut unlocker, AccountAddressType::P2SHWPKH, 0, 0, 10).unwrap());
+        assert_eq!(master.get_mut((0,0)).unwrap().next_key().unwrap().address, Address::from_str("3JKyFZdkKYYgxFT37cPgJDxqNzQQKbbbtj").unwrap());
     }
 
     #[test]
