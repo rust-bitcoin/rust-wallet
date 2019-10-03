@@ -11,28 +11,27 @@ It supports legacy P2PKH, transitional P2SHWPKH and native segwit P2WPKH for sin
 and native P2WSH for arbitrary sripts.
 
 ## Basic Accounts Use
+`MasterAccount` holds an encrypted seed that implies the BIP32 root key. Add any number of `Account` to it to derive 
+hiararchies following BIP44. An Account will have addresses of a uniform type. 
 ```
 const PASSPHRASE: &str = "correct horse battery staple";
 
 // create a new random master account. This holds the root BIP32 key
-let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE, None).unwrap();
+// PASSPHRASE is used to encrypt the seed in memory and in storage
+let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
 
 // or re-create a master from a known mnemonic
 let words = "announce damage viable ticket engage curious yellow ten clock finish burden orient faculty rigid smile host offer affair suffer slogan mercy another switch park";
 let mnemonic = Mnemonic::from_str(words).unwrap();
+// PASSPHRASE is used to encrypt the seed in memory and in storage
+// last argument is option password for plausible deniability
 let mut master = MasterAccount::from_mnemonic(&mnemonic, 0, Network::Bitcoin, PASSPHRASE, None).unwrap();
 
-// or re-create a master from encrypted storage that holds AES encrypted mnemonic, master public key and the birth time point of the key (seconds in Unix epoch)
-let mut master = MasterAccount::from_encrypted(
-            hex::decode("0e05ba48bb0fdc7285dc9498202aeee5e1777ac4f55072b30f15f6a8632ad0f3fde1c41d9e162dbe5d3153282eaebd081cf3b3312336fc56f5dd18a2df6ea48c1cdd11a1ed11281cd2e0f864f02e5bed5ab03326ed24e43b8a184acff9cb4e730db484e33f2b24295a97b2ca87871a69384eb64d4160ce8b3e8b4d90234040970e531d4333a8979dbe533c2b2668bf43b6607b2d24c5b42765ebfdd075fd173c").unwrap().as_slice(),
-            ExtendedPubKey::from_str("tpubD6NzVbkrYhZ4XKz4vgwBmnnVmA7EgWhnXvimQ4krq94yUgcSSbroi4uC1xbZ3UGMxG9M2utmaPjdpMrWW2uKRY9Mj4DZWrrY8M4pry8shsK").unwrap(),
-            1567260002);
-
 // The master accounts only store public keys
-// Private keys are created on-demand with an Unlocker and forgotten as soon as possible
+// Private keys are created on-demand from encrypted seed with an Unlocker and forgotten as soon as possible
 
 // create an unlocker that is able to decrypt the encrypted mnemonic and then calculate private keys
-let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE, None).unwrap();
+let mut unlocker = Unlocker::new_for_master(&master, PASSPHRASE).unwrap();
 
 // The unlocker is needed to create accounts within the master account as 
 // key derivation follows BIP 44, which requires private key derivation
@@ -164,4 +163,25 @@ coins.unwind_tip(block_hash);
 // choose inputs to spend
 let inputs = choose_inputs (minimum_amount_needed, current_block_height, |h| height_of_block(h));
 
+```
+## Shamir's Secret Shares
+```
+// create an new random account        
+let master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
+
+// extract seed
+let seed = master.seed(Network::Bitcoin, PASSPHRASE).unwrap();
+
+// cut seed into 5 shares such that any 3 of them is sufficient to re-construct
+let shares = ShamirSecretSharing::generate(1, &[(3,5)], &seed, None, 1).unwrap();
+
+// re-construct seed from the first 3
+let reconstructed_seed = ShamirSecretSharing::combine(&shares[..3], None).unwrap();
+
+// re-construct master from seed
+let reconstructed_master = MasterAccount::from_seed(&reconstructed_seed, 0, Network::Bitcoin, PASSPHRASE).unwrap();
+
+// prove that everything went fine
+assert_eq!(master.master_public(), reconstructed_master.master_public());
+assert_eq!(master.encrypted(), reconstructed_master.encrypted());
 ```
