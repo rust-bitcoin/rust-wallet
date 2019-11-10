@@ -21,24 +21,23 @@
 #![deny(unused_must_use)]
 #![forbid(unsafe_code)]
 
-extern crate crypto;
-extern crate secp256k1;
 extern crate bitcoin;
 extern crate bitcoin_hashes;
+extern crate crypto;
 #[cfg(test)]
 extern crate hex;
+extern crate rand;
+extern crate secp256k1;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 #[cfg(test)]
 extern crate serde_json;
-extern crate rand;
 
-extern crate serde;
-#[macro_use] extern crate serde_derive;
-
-pub mod sss;
-pub mod mnemonic;
-pub mod error;
-pub mod context;
 pub mod account;
 pub mod coins;
+pub mod context;
+pub mod error;
+pub mod mnemonic;
 pub mod proved;
-
+pub mod sss;

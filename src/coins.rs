@@ -18,20 +18,22 @@
 //!
 //!
 
-use bitcoin_hashes::sha256d;
-use bitcoin::{OutPoint, TxOut, Script, Transaction};
-use bitcoin::Block;
 use std::collections::HashMap;
-use account::{MasterAccount, KeyDerivation};
-use proved::ProvedTransaction;
+
+use bitcoin::Block;
+use bitcoin::{OutPoint, Script, Transaction, TxOut};
+use bitcoin_hashes::sha256d;
 use rand::thread_rng;
+
+use account::{KeyDerivation, MasterAccount};
+use proved::ProvedTransaction;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 /// a coin is defined by the spendable output
 /// the key derivation that allows to spend it
 pub struct Coin {
     pub output: TxOut,
-    pub derivation: KeyDerivation
+    pub derivation: KeyDerivation,
 }
 
 /// Manage coins
@@ -46,8 +48,12 @@ pub struct Coins {
 }
 
 impl Coins {
-    pub fn new () -> Coins {
-        Coins { confirmed: HashMap::new(), proofs: HashMap::new(), unconfirmed: HashMap::new() }
+    pub fn new() -> Coins {
+        Coins {
+            confirmed: HashMap::new(),
+            proofs: HashMap::new(),
+            unconfirmed: HashMap::new(),
+        }
     }
 
     /// this should only be used to restore previously computed state
@@ -65,7 +71,11 @@ impl Coins {
     }
 
     /// process an unconfirmed transaction. Useful eg. to process own spends.
-    pub fn process_unconfirmed_transaction(&mut self, master_account: &mut MasterAccount, transaction: &Transaction) -> bool {
+    pub fn process_unconfirmed_transaction(
+        &mut self,
+        master_account: &mut MasterAccount,
+        transaction: &Transaction,
+    ) -> bool {
         let mut scripts: HashMap<Script, KeyDerivation> = master_account.get_scripts().collect();
         let mut modified = false;
         for input in transaction.input.iter() {
@@ -74,11 +84,35 @@ impl Coins {
         for (vout, output) in transaction.output.iter().enumerate() {
             let mut lookahead = Vec::new();
             if let Some(d) = scripts.get(&output.script_pubkey) {
-                lookahead =
-                    master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(Some(d.kix)).unwrap()
-                        .iter().map(move |(kix, s)| (s.clone(), KeyDerivation { kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone(), csv: d.csv.clone() })).collect();
-                self.unconfirmed.insert(OutPoint { txid: transaction.txid(), vout: vout as u32 },
-                                      Coin { output: output.clone(), derivation: d.clone() });
+                lookahead = master_account
+                    .get_mut((d.account, d.sub))
+                    .unwrap()
+                    .do_look_ahead(Some(d.kix))
+                    .unwrap()
+                    .iter()
+                    .map(move |(kix, s)| {
+                        (
+                            s.clone(),
+                            KeyDerivation {
+                                kix: *kix,
+                                account: d.account,
+                                sub: d.sub,
+                                tweak: d.tweak.clone(),
+                                csv: d.csv.clone(),
+                            },
+                        )
+                    })
+                    .collect();
+                self.unconfirmed.insert(
+                    OutPoint {
+                        txid: transaction.txid(),
+                        vout: vout as u32,
+                    },
+                    Coin {
+                        output: output.clone(),
+                        derivation: d.clone(),
+                    },
+                );
                 modified = true;
             }
             for (s, d) in lookahead {
@@ -101,27 +135,39 @@ impl Coins {
     }
 
     pub fn available_balance<H>(&self, height: u32, block_height: H) -> u64
-        where H: Fn(&sha256d::Hash) -> Option<u32> {
-        self.available_coins(height, block_height).iter().map(|(_, c,_)| c.output.value).sum::<u64> ()
+    where
+        H: Fn(&sha256d::Hash) -> Option<u32>,
+    {
+        self.available_coins(height, block_height)
+            .iter()
+            .map(|(_, c, _)| c.output.value)
+            .sum::<u64>()
     }
 
     pub fn available_coins<H>(&self, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
-        where H: Fn(&sha256d::Hash) -> Option<u32> {
-        self.confirmed.iter().filter_map(|(p, c)| {
-            let confirmed = self.proofs.get(&p.txid).expect("confirmed coin without proof");
-            let conf_height = block_height(confirmed.get_block_hash()).expect("proof not on trunk");
-            if let Some(csv) = c.derivation.csv {
-                if height >= conf_height + csv as u32 {
-                    return Some(((*p).clone(), (*c).clone(), conf_height))
+    where
+        H: Fn(&sha256d::Hash) -> Option<u32>,
+    {
+        self.confirmed
+            .iter()
+            .filter_map(|(p, c)| {
+                let confirmed = self
+                    .proofs
+                    .get(&p.txid)
+                    .expect("confirmed coin without proof");
+                let conf_height =
+                    block_height(confirmed.get_block_hash()).expect("proof not on trunk");
+                if let Some(csv) = c.derivation.csv {
+                    if height >= conf_height + csv as u32 {
+                        return Some(((*p).clone(), (*c).clone(), conf_height));
+                    } else {
+                        None
+                    }
+                } else {
+                    return Some(((*p).clone(), (*c).clone(), conf_height));
                 }
-                else {
-                    None
-                }
-            }
-            else {
-                return Some(((*p).clone(), (*c).clone(), conf_height))
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     pub fn confirmed_balance(&self) -> u64 {
@@ -129,17 +175,32 @@ impl Coins {
     }
 
     pub fn unconfirmed_balance(&self) -> u64 {
-        self.unconfirmed.values().map(|c| c.output.value).sum::<u64>()
+        self.unconfirmed
+            .values()
+            .map(|c| c.output.value)
+            .sum::<u64>()
     }
 
     /// unwind the tip of the trunk
     pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) {
         // this means we might have lost control of coins at least temporarily
-        let lost_coins = self.proofs.values()
-            .filter_map(|t| if *t.get_block_hash() == *block_hash {
-                Some(t.get_transaction().txid())
-            } else { None })
-            .flat_map(|txid| self.confirmed.keys().filter(move |point| point.txid == txid)).cloned().collect::<Vec<OutPoint>>();
+        let lost_coins = self
+            .proofs
+            .values()
+            .filter_map(|t| {
+                if *t.get_block_hash() == *block_hash {
+                    Some(t.get_transaction().txid())
+                } else {
+                    None
+                }
+            })
+            .flat_map(|txid| {
+                self.confirmed
+                    .keys()
+                    .filter(move |point| point.txid == txid)
+            })
+            .cloned()
+            .collect::<Vec<OutPoint>>();
 
         for point in lost_coins {
             self.proofs.remove(&point.txid);
@@ -157,7 +218,8 @@ impl Coins {
 
         let mut modified = false;
         for (txnr, tx) in block.txdata.iter().enumerate() {
-            if txnr > 0 { // skip coinbase
+            if txnr > 0 {
+                // skip coinbase
                 for input in tx.input.iter() {
                     modified |= self.remove_confirmed(&input.previous_output);
                 }
@@ -165,13 +227,40 @@ impl Coins {
             for (vout, output) in tx.output.iter().enumerate() {
                 let mut lookahead = Vec::new();
                 if let Some(d) = scripts.get(&output.script_pubkey) {
-                    lookahead =
-                        master_account.get_mut((d.account, d.sub)).unwrap().do_look_ahead(Some(d.kix)).unwrap()
-                            .iter().map(move |(kix, s)| (s.clone(), KeyDerivation{ kix: *kix, account: d.account, sub: d.sub, tweak: d.tweak.clone(), csv: d.csv.clone()})).collect();
-                    let point = OutPoint { txid: tx.txid(), vout: vout as u32 };
+                    lookahead = master_account
+                        .get_mut((d.account, d.sub))
+                        .unwrap()
+                        .do_look_ahead(Some(d.kix))
+                        .unwrap()
+                        .iter()
+                        .map(move |(kix, s)| {
+                            (
+                                s.clone(),
+                                KeyDerivation {
+                                    kix: *kix,
+                                    account: d.account,
+                                    sub: d.sub,
+                                    tweak: d.tweak.clone(),
+                                    csv: d.csv.clone(),
+                                },
+                            )
+                        })
+                        .collect();
+                    let point = OutPoint {
+                        txid: tx.txid(),
+                        vout: vout as u32,
+                    };
                     self.unconfirmed.remove(&point);
-                    self.confirmed.insert(point, Coin { output: output.clone(), derivation: d.clone()});
-                    self.proofs.entry(tx.txid()).or_insert(ProvedTransaction::new(block, txnr));
+                    self.confirmed.insert(
+                        point,
+                        Coin {
+                            output: output.clone(),
+                            derivation: d.clone(),
+                        },
+                    );
+                    self.proofs
+                        .entry(tx.txid())
+                        .or_insert(ProvedTransaction::new(block, txnr));
                     modified = true;
                 }
                 for (s, d) in lookahead {
@@ -184,15 +273,22 @@ impl Coins {
 
     /// get random confirmed coins of sufficient amount
     /// returns a vector of spent outpoins, coins and their confirmation height
-    pub fn choose_inputs<H> (&self, minimum: u64, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
-        where H: Fn(&sha256d::Hash) -> Option<u32> {
+    pub fn choose_inputs<H>(
+        &self,
+        minimum: u64,
+        height: u32,
+        block_height: H,
+    ) -> Vec<(OutPoint, Coin, u32)>
+    where
+        H: Fn(&sha256d::Hash) -> Option<u32>,
+    {
         use rand::prelude::SliceRandom;
         // TODO: knapsack
         let mut sum = 0u64;
         let mut have = self.available_coins(height, block_height);
-        have.sort_by(|(_, a,_), (_, b,_)| a.output.value.cmp(&b.output.value));
+        have.sort_by(|(_, a, _), (_, b, _)| a.output.value.cmp(&b.output.value));
         let mut inputs = Vec::new();
-        for (point, coin,height) in have.iter() {
+        for (point, coin, height) in have.iter() {
             sum += coin.output.value;
             inputs.push(((*point).clone(), (*coin).clone(), *height));
             if sum >= minimum {
@@ -202,7 +298,13 @@ impl Coins {
         if sum > minimum {
             let mut change = sum - minimum;
             // drop some if possible
-            while let Some(index) = inputs.iter().enumerate().find_map(|(i, (_, c,_))| if c.output.value <= change { Some(i) } else { None }) {
+            while let Some(index) = inputs.iter().enumerate().find_map(|(i, (_, c, _))| {
+                if c.output.value <= change {
+                    Some(i)
+                } else {
+                    None
+                }
+            }) {
                 let removed = inputs[index].1.output.value;
                 change -= removed;
                 inputs.remove(index);
@@ -215,31 +317,39 @@ impl Coins {
 
 #[cfg(test)]
 mod test {
-    use bitcoin_hashes::sha256d;
-    use bitcoin::{Block, BlockHeader, Address, Transaction, TxIn, OutPoint, TxOut, util::hash::MerkleRoot, network::constants::Network, BitcoinHash};
     use std::{
         str::FromStr,
-        time::{SystemTime, UNIX_EPOCH}
+        time::{SystemTime, UNIX_EPOCH},
     };
+
+    use bitcoin::blockdata::constants::genesis_block;
     use bitcoin::blockdata::script::Builder;
     use bitcoin::util::bip32::ExtendedPubKey;
-    use account::{Unlocker, Account, AccountAddressType, MasterAccount};
-    use bitcoin::blockdata::constants::genesis_block;
+    use bitcoin::{
+        network::constants::Network, util::hash::MerkleRoot, Address, BitcoinHash, Block,
+        BlockHeader, OutPoint, Transaction, TxIn, TxOut,
+    };
+    use bitcoin_hashes::sha256d;
+
+    use account::{Account, AccountAddressType, MasterAccount, Unlocker};
     use coins::Coins;
 
-    const NEW_COINS:u64 = 5000000000;
+    const NEW_COINS: u64 = 5000000000;
 
-    fn new_block (prev: &sha256d::Hash) -> Block {
+    fn new_block(prev: &sha256d::Hash) -> Block {
         Block {
-            header :BlockHeader {
+            header: BlockHeader {
                 version: 1,
-                time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as u32,
+                time: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as u32,
                 nonce: 0,
                 bits: 0x1d00ffff,
                 prev_blockhash: prev.clone(),
-                merkle_root: sha256d::Hash::default()
+                merkle_root: sha256d::Hash::default(),
             },
-            txdata: Vec::new()
+            txdata: Vec::new(),
         }
     }
 
@@ -247,20 +357,23 @@ mod test {
         Transaction {
             version: 2,
             lock_time: 0,
-            input: vec!(TxIn {
+            input: vec![TxIn {
                 sequence: 0xffffffff,
                 witness: Vec::new(),
-                previous_output: OutPoint{ txid: sha256d::Hash::default(), vout: 0 },
-                script_sig: Builder::new().push_int(height as i64).into_script()
-            }),
-            output: vec!(TxOut{
+                previous_output: OutPoint {
+                    txid: sha256d::Hash::default(),
+                    vout: 0,
+                },
+                script_sig: Builder::new().push_int(height as i64).into_script(),
+            }],
+            output: vec![TxOut {
                 value: NEW_COINS,
-                script_pubkey: miner.script_pubkey()
-            })
+                script_pubkey: miner.script_pubkey(),
+            }],
         }
     }
 
-    fn add_tx (block: &mut Block, tx: Transaction) {
+    fn add_tx(block: &mut Block, tx: Transaction) {
         block.txdata.push(tx);
         block.header.merkle_root = block.merkle_root();
     }
@@ -271,7 +384,9 @@ mod test {
             ExtendedPubKey::from_str("tpubD6NzVbkrYhZ4YUqaTmpewwbvSoA4dkwzGzvwGcUbwbRyu8i6dCSroCsvFmC6qzQgJxddMfA6Mg8r6XmkJVhQ8ihAWzfRBYTG5o28AC5HWX2").unwrap(),
             1567260002);
         let mut unlocker = Unlocker::new_for_master(&master, "whatever").unwrap();
-        master.add_account(Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap());
+        master.add_account(
+            Account::new(&mut unlocker, AccountAddressType::P2WPKH, 0, 0, 10).unwrap(),
+        );
         master
     }
 
@@ -282,10 +397,16 @@ mod test {
     }
 
     #[test]
-    pub fn test_coins () {
+    pub fn test_coins() {
         let mut coins = Coins::new();
         let mut master = new_master();
-        let miner = master.get_mut((0,0)).unwrap().next_key().unwrap().address.clone();
+        let miner = master
+            .get_mut((0, 0))
+            .unwrap()
+            .next_key()
+            .unwrap()
+            .address
+            .clone();
         let genesis = genesis_block(Network::Testnet);
         let next = mine(&genesis.bitcoin_hash(), 1, miner);
         coins.process(&mut master, &next);

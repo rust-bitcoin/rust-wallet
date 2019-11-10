@@ -19,14 +19,10 @@
 //! Modules of this library use this error class to indicate problems.
 //!
 
+use std::{convert, error, fmt, io};
 
-use std::convert;
-use std::error;
-use std::fmt;
-use std::io;
 use bitcoin::util::bip32;
 use crypto::symmetriccipher;
-
 
 /// An error class to offer a unified error interface upstream
 pub enum Error {
@@ -45,7 +41,7 @@ pub enum Error {
     /// sekp256k1 error
     SecpError(secp256k1::Error),
     /// cipher error
-    SymmetricCipherError(symmetriccipher::SymmetricCipherError)
+    SymmetricCipherError(symmetriccipher::SymmetricCipherError),
 }
 
 impl error::Error for Error {
@@ -60,8 +56,8 @@ impl error::Error for Error {
             Error::SecpError(ref err) => err.description(),
             Error::SymmetricCipherError(ref err) => match err {
                 &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
-                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding"
-            }
+                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
+            },
         }
     }
 
@@ -74,7 +70,7 @@ impl error::Error for Error {
             Error::IO(ref err) => Some(err),
             Error::KeyDerivation(ref err) => Some(err),
             Error::SecpError(ref err) => Some(err),
-            Error::SymmetricCipherError(_) => None
+            Error::SymmetricCipherError(_) => None,
         }
     }
 }
@@ -91,10 +87,14 @@ impl fmt::Display for Error {
             Error::IO(ref err) => write!(f, "IO error: {}", err),
             Error::KeyDerivation(ref err) => write!(f, "BIP32 error: {}", err),
             Error::SecpError(ref err) => write!(f, "Secp256k1 error: {}", err),
-            Error::SymmetricCipherError(ref err) => write!(f, "Cipher error: {}", match err {
-                &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
-                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding"
-            })
+            Error::SymmetricCipherError(ref err) => write!(
+                f,
+                "Cipher error: {}",
+                match err {
+                    &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
+                    &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
+                }
+            ),
         }
     }
 }
@@ -134,7 +134,6 @@ impl convert::From<symmetriccipher::SymmetricCipherError> for Error {
         Error::SymmetricCipherError(err)
     }
 }
-
 
 impl convert::From<secp256k1::Error> for Error {
     fn from(err: secp256k1::Error) -> Error {

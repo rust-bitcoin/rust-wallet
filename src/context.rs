@@ -17,40 +17,56 @@
 //! # Key derivation
 //!
 use bitcoin::{
-    PublicKey, PrivateKey,
-    network::constants::Network
+    network::constants::Network,
+    util::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey},
+    PrivateKey, PublicKey,
 };
-use bitcoin::util::bip32::{ExtendedPubKey, ExtendedPrivKey,ChildNumber};
-use secp256k1::{All,Secp256k1, Message, Signature};
-use error::Error;
+use secp256k1::{All, Message, Secp256k1, Signature};
+
 use account::Seed;
+use error::Error;
 
 pub struct SecpContext {
-    secp: Secp256k1<All>
+    secp: Secp256k1<All>,
 }
 
 impl SecpContext {
     pub fn new() -> SecpContext {
         SecpContext {
-            secp: Secp256k1::new()
+            secp: Secp256k1::new(),
         }
     }
 
     /// create a master private key from seed
-    pub fn master_private_key(&self, network: Network, seed: &Seed) -> Result<ExtendedPrivKey, Error> {
-        Ok(ExtendedPrivKey::new_master (network, &seed.0)?)
+    pub fn master_private_key(
+        &self,
+        network: Network,
+        seed: &Seed,
+    ) -> Result<ExtendedPrivKey, Error> {
+        Ok(ExtendedPrivKey::new_master(network, &seed.0)?)
     }
 
     /// get extended public key for a known private key
-    pub fn extended_public_from_private(&self, extended_private_key: &ExtendedPrivKey) -> ExtendedPubKey {
+    pub fn extended_public_from_private(
+        &self,
+        extended_private_key: &ExtendedPrivKey,
+    ) -> ExtendedPubKey {
         ExtendedPubKey::from_private(&self.secp, extended_private_key)
     }
 
-    pub fn private_child (&self, extended_private_key: &ExtendedPrivKey, child: ChildNumber) -> Result<ExtendedPrivKey, Error> {
+    pub fn private_child(
+        &self,
+        extended_private_key: &ExtendedPrivKey,
+        child: ChildNumber,
+    ) -> Result<ExtendedPrivKey, Error> {
         Ok(extended_private_key.ckd_priv(&self.secp, child)?)
     }
 
-    pub fn public_child (&self, extended_public_key: &ExtendedPubKey, child: ChildNumber) -> Result<ExtendedPubKey, Error> {
+    pub fn public_child(
+        &self,
+        extended_public_key: &ExtendedPubKey,
+        child: ChildNumber,
+    ) -> Result<ExtendedPubKey, Error> {
         Ok(extended_public_key.ckd_pub(&self.secp, child)?)
     }
 
@@ -58,7 +74,7 @@ impl SecpContext {
         PublicKey::from_private_key(&self.secp, private)
     }
 
-    pub fn sign(&self, digest: &[u8], key: &PrivateKey) -> Result<Signature, Error>{
+    pub fn sign(&self, digest: &[u8], key: &PrivateKey) -> Result<Signature, Error> {
         Ok(self.secp.sign(&Message::from_slice(digest)?, &key.key))
     }
 
