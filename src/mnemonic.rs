@@ -72,7 +72,8 @@ impl Mnemonic {
             }
         }
         writer.flush().unwrap();
-        let (payload, checksum) = data.split_at(data.len() - std::cmp::max(1,data.len()/32));
+        let l = data.len();
+        let (payload, checksum) = data.split_at(l - if l > 33 {2} else {1});
         if Self::checksum(payload).as_slice() != checksum {
             return Err(Error::Mnemonic("Checksum failed"));
         }
@@ -149,7 +150,6 @@ mod test {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_str().unwrap()).unwrap();
             let m = values[1].as_str().unwrap();
-            println!("{}", m);
             let mnemonic = Mnemonic::from_str(m).unwrap();
             let seed = mnemonic.to_seed(Some("TREZOR"));
             assert_eq!(
