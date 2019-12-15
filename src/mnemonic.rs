@@ -18,6 +18,7 @@
 //!
 //! TREZOR compatible mnemonic in english
 //!
+use bitcoin::util::bip158::{BitStreamReader, BitStreamWriter};
 use account::Seed;
 use crypto::{
     digest::Digest,
@@ -26,6 +27,7 @@ use crypto::{
     sha2::{Sha256, Sha512},
 };
 use error::Error;
+use std::io::Cursor;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Mnemonic(Vec<&'static str>);
@@ -58,14 +60,23 @@ impl Mnemonic {
                 "Mnemonic must have a word count divisible with 6",
             ));
         }
+        let mut data = Vec::new();
+        let mut writer = BitStreamWriter::new(&mut data);
         let mut mnemonic = Vec::new();
         for word in &words {
             if let Ok(idx) = WORDS.binary_search(word) {
                 mnemonic.push(WORDS[idx]);
+                writer.write(idx as u64, 11).unwrap();
             } else {
                 return Err(Error::Mnemonic("Mnemonic contains an unknown word"));
             }
         }
+        writer.flush().unwrap();
+        let (payload, checksum) = data.split_at(data.len() - std::cmp::max(1,data.len()/32));
+        if Self::checksum(payload).as_slice() != checksum {
+            return Err(Error::Mnemonic("Checksum failed"));
+        }
+
         Ok(Mnemonic(mnemonic))
     }
 
@@ -76,33 +87,33 @@ impl Mnemonic {
                 "Data for mnemonic should have a length divisible by 4",
             ));
         }
-        let mut check = [0u8; 32];
+        let mut with_checksum = data.to_vec();
+        with_checksum.extend_from_slice(Self::checksum(data).as_slice());
+        let mut cursor = Cursor::new(&with_checksum);
+        let mut reader = BitStreamReader::new(&mut cursor);
+        let mlen = data.len() * 3 / 4;
+        let mut memo = Vec::new();
+        for _ in 0..mlen {
+            memo.push(WORDS[reader.read(11).unwrap() as usize]);
+        }
+        Ok(Mnemonic(memo))
+    }
+
+    fn checksum(data: &[u8]) -> Vec<u8> {
+        let mut hash = [0u8; 32];
+        let mut checksum = Vec::new();
+        let mut writer = BitStreamWriter::new(&mut checksum);
 
         let mut sha2 = Sha256::new();
         sha2.input(data);
-        sha2.result(&mut check);
-
-        let mut bits = vec![false; data.len() * 8 + data.len() / 4];
-        for i in 0..data.len() {
-            for j in 0..8 {
-                bits[i * 8 + j] = (data[i] & (1 << (7 - j))) > 0;
-            }
+        sha2.result(&mut hash);
+        let mut check_cursor = Cursor::new(&hash);
+        let mut check_reader = BitStreamReader::new(&mut check_cursor);
+        for _ in 0..data.len()/4 {
+            writer.write(check_reader.read(1).unwrap(), 1).unwrap();
         }
-        for i in 0..data.len() / 4 {
-            bits[8 * data.len() + i] = (check[i / 8] & (1 << (7 - (i % 8)))) > 0;
-        }
-        let mlen = data.len() * 3 / 4;
-        let mut memo = Vec::new();
-        for i in 0..mlen {
-            let mut idx = 0;
-            for j in 0..11 {
-                if bits[i * 11 + j] {
-                    idx += 1 << (10 - j);
-                }
-            }
-            memo.push(WORDS[idx]);
-        }
-        Ok(Mnemonic(memo))
+        writer.flush().unwrap();
+        checksum
     }
 }
 
@@ -137,7 +148,9 @@ mod test {
         for t in 0..tests.len() {
             let values = tests[t].as_array().unwrap();
             let data = decode(values[0].as_str().unwrap()).unwrap();
-            let mnemonic = Mnemonic::from_str(values[1].as_str().unwrap()).unwrap();
+            let m = values[1].as_str().unwrap();
+            println!("{}", m);
+            let mnemonic = Mnemonic::from_str(m).unwrap();
             let seed = mnemonic.to_seed(Some("TREZOR"));
             assert_eq!(
                 mnemonic.to_string(),

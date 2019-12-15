@@ -692,7 +692,7 @@ mod test {
     #[test]
     pub fn reconstruct() {
         let master =
-            MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
+            MasterAccount::new(MasterKeyEntropy::Sufficient, Network::Bitcoin, PASSPHRASE).unwrap();
         let seed = master.seed(Network::Bitcoin, PASSPHRASE).unwrap();
         let shares = ShamirSecretSharing::generate(1, &[(3, 5)], &seed, None, 1).unwrap();
         let reconstructed_seed = ShamirSecretSharing::combine(&shares[..3], None).unwrap();

@@ -1,6 +1,6 @@
 [package]
 name = "bitcoin-wallet"
-version = "1.0.1"
+version = "1.1.0"
 authors = ["Tamas Blummer <tamas.blummer@gmail.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/rust-bitcoin/rust-wallet/"
