@@ -19,7 +19,7 @@
 //! TREZOR compatible mnemonic in english
 //!
 use bitcoin::util::bip158::{BitStreamReader, BitStreamWriter};
-use account::Seed;
+use account::{Seed, MasterKeyEntropy};
 use crypto::{
     digest::Digest,
     hmac::Hmac,
@@ -28,13 +28,14 @@ use crypto::{
 };
 use error::Error;
 use std::io::Cursor;
+use rand::{thread_rng, RngCore};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub struct Mnemonic(Vec<&'static str>);
+pub struct Mnemonic(Vec<usize>);
 
 impl ToString for Mnemonic {
     fn to_string(&self) -> String {
-        self.0.as_slice().join(" ")
+        self.0.iter().map(|i| WORDS[*i]).collect::<Vec<_>>().as_slice().join(" ")
     }
 }
 
@@ -50,7 +51,7 @@ impl Mnemonic {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(|s| *s)
+        self.0.iter().map(|s| WORDS[*s])
     }
 
     pub fn from_str(s: &str) -> Result<Mnemonic, Error> {
@@ -65,7 +66,7 @@ impl Mnemonic {
         let mut mnemonic = Vec::new();
         for word in &words {
             if let Ok(idx) = WORDS.binary_search(word) {
-                mnemonic.push(WORDS[idx]);
+                mnemonic.push(idx);
                 writer.write(idx as u64, 11).unwrap();
             } else {
                 return Err(Error::Mnemonic("Mnemonic contains an unknown word"));
@@ -81,6 +82,17 @@ impl Mnemonic {
         Ok(Mnemonic(mnemonic))
     }
 
+    pub fn new_random(entropy: MasterKeyEntropy) -> Result<Mnemonic, Error> {
+        let len = match entropy {
+            MasterKeyEntropy::Sufficient => 16,
+            MasterKeyEntropy::Double => 32,
+            MasterKeyEntropy::Paranoid => 64
+        };
+        let mut random = vec!(0u8; len);
+        thread_rng().fill_bytes(random.as_mut_slice());
+        Self::new(random.as_slice())
+    }
+
     /// create a mnemonic for some data
     pub fn new(data: &[u8]) -> Result<Mnemonic, Error> {
         if data.len() % 4 != 0 {
@@ -93,11 +105,37 @@ impl Mnemonic {
         let mut cursor = Cursor::new(&with_checksum);
         let mut reader = BitStreamReader::new(&mut cursor);
         let mlen = data.len() * 3 / 4;
-        let mut memo = Vec::new();
+        let mut mnemonic = Vec::new();
         for _ in 0..mlen {
-            memo.push(WORDS[reader.read(11).unwrap() as usize]);
+            mnemonic.push(reader.read(11).unwrap() as usize);
         }
-        Ok(Mnemonic(memo))
+        Ok(Mnemonic(mnemonic))
+    }
+
+    pub fn extend (&self) -> Result<Mnemonic, Error> {
+        if self.0.len() != 12 {
+            return Err(Error::Mnemonic(
+                "Can only extend mnemonic of 12 words to 24 words",
+            ));
+        }
+        let mut data = Vec::new();
+        let mut writer = BitStreamWriter::new(&mut data);
+        for idx in &self.0 {
+            writer.write(*idx as u64, 11).unwrap();
+        }
+        for _ in 0..11 {
+            writer.write(thread_rng().next_u64(), 11).unwrap();
+        }
+        writer.write(thread_rng().next_u64(), 3).unwrap();
+        writer.flush().unwrap();
+        data.extend_from_slice(Self::checksum(&data).as_slice());
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = BitStreamReader::new(&mut cursor);
+        let mut mnemonic = Vec::new();
+        for _ in 0..24 {
+            mnemonic.push(reader.read(11).unwrap() as usize);
+        }
+        Ok(Mnemonic(mnemonic))
     }
 
     fn checksum(data: &[u8]) -> Vec<u8> {
@@ -179,6 +217,14 @@ mod test {
             "getter advice cage absurd amount doctor acoustic avoid letter advice cage above"
         )
         .is_err());
+    }
+
+    #[test]
+    fn test_extend() {
+        let short = Mnemonic::new_random(MasterKeyEntropy::Sufficient).unwrap();
+        let extended = short.extend().unwrap();
+        let check = Mnemonic::from_str(extended.to_string().as_str()).unwrap();
+        assert!(short.iter().zip(check.iter()).take(12).all(|(a, b)| *a == *b));
     }
 }
 
