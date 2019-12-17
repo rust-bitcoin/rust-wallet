@@ -74,23 +74,14 @@ impl MasterAccount {
         network: Network,
         passphrase: &str,
     ) -> Result<MasterAccount, Error> {
-        let context = SecpContext::new();
         let mut random = vec![0u8; entropy as usize];
         thread_rng().fill_bytes(random.as_mut_slice());
         let seed = Seed(random);
-        let encrypted = seed.encrypt(passphrase)?;
-        let master_key = context.master_private_key(network, &seed)?;
-        let public_master_key = context.extended_public_from_private(&master_key);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        Ok(MasterAccount {
-            master_public: public_master_key,
-            encrypted,
-            accounts: HashMap::new(),
-            birth: now,
-        })
+        Self::from_seed(&seed, now, network, passphrase)
     }
 
     /// Restore from encrypted store
