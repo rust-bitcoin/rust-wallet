@@ -18,7 +18,7 @@ const PASSPHRASE: &str = "correct horse battery staple";
 
 // create a new random master account. This holds the root BIP32 key
 // PASSPHRASE is used to encrypt the seed in memory and in storage
-let mut master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
+let mut master = MasterAccount::new(MasterKeyEntropy::Sufficient, Network::Bitcoin, PASSPHRASE).unwrap();
 
 // or re-create a master from a known mnemonic
 let words = "announce damage viable ticket engage curious yellow ten clock finish burden orient faculty rigid smile host offer affair suffer slogan mercy another switch park";
