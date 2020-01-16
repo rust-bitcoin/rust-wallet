@@ -13,7 +13,7 @@ and native P2WSH for arbitrary sripts.
 ## Basic Accounts Use
 `MasterAccount` holds an encrypted seed that implies the BIP32 root key. Add any number of `Account` to it to derive 
 hiararchies following BIP44. An Account will have addresses of a uniform type. 
-```
+```rust
 const PASSPHRASE: &str = "correct horse battery staple";
 
 // create a new random master account. This holds the root BIP32 key
@@ -124,7 +124,7 @@ spending_transaction.verify(|point|
         ).expect("Bitcoin Core would not like this")
 ```
 ## Advanced Accounts Use
-```
+```rust
 const CSV:u16 = 10; // 10 blocks relative lock
 
 // create a P2WSH (pay-to-witness-script-hash) (native segwit for arbitrary scripts) account
@@ -144,7 +144,7 @@ master.add_account(account);
 
 ```
 ## Coins use
-```
+```rust
 // create a coin store
 let mut coins = Coins::new();
 
@@ -165,7 +165,7 @@ let inputs = choose_inputs (minimum_amount_needed, current_block_height, |h| hei
 
 ```
 ## Shamir's Secret Shares
-```
+```rust
 // create an new random account        
 let master = MasterAccount::new(MasterKeyEntropy::Low, Network::Bitcoin, PASSPHRASE).unwrap();
 
