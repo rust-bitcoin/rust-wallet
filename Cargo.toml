@@ -12,8 +12,6 @@ readme = "README.md"
 
 [dependencies]
 bitcoin = { version= "0.23", features=["use-serde"]}
-bitcoin_hashes={version="0.7", features=["serde"]}
-secp256k1 = "0.17"
 rand="0.7"
 rust-crypto = "0.2"
 serde = "1"

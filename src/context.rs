@@ -16,12 +16,12 @@
 //!
 //! # Key derivation
 //!
+use bitcoin::secp256k1::{All, Message, Secp256k1, Signature};
 use bitcoin::{
     network::constants::Network,
     util::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey},
     PrivateKey, PublicKey,
 };
-use secp256k1::{All, Message, Secp256k1, Signature};
 
 use account::Seed;
 use error::Error;

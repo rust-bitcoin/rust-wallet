@@ -18,8 +18,8 @@
 //!
 //!
 
+use bitcoin::hashes::{sha256d, Hash, HashEngine};
 use bitcoin::{BitcoinHash, Block, Transaction};
-use bitcoin_hashes::{sha256d, Hash, HashEngine};
 
 /// A confirmed transaction with its SPV proof
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
