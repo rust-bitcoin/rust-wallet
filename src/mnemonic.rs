@@ -18,8 +18,8 @@
 //!
 //! TREZOR compatible mnemonic in english
 //!
+use account::{MasterKeyEntropy, Seed};
 use bitcoin::util::bip158::{BitStreamReader, BitStreamWriter};
-use account::{Seed, MasterKeyEntropy};
 use crypto::{
     digest::Digest,
     hmac::Hmac,
@@ -27,15 +27,20 @@ use crypto::{
     sha2::{Sha256, Sha512},
 };
 use error::Error;
-use std::io::Cursor;
 use rand::{thread_rng, RngCore};
+use std::io::Cursor;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Mnemonic(Vec<usize>);
 
 impl ToString for Mnemonic {
     fn to_string(&self) -> String {
-        self.0.iter().map(|i| WORDS[*i]).collect::<Vec<_>>().as_slice().join(" ")
+        self.0
+            .iter()
+            .map(|i| WORDS[*i])
+            .collect::<Vec<_>>()
+            .as_slice()
+            .join(" ")
     }
 }
 
@@ -74,7 +79,7 @@ impl Mnemonic {
         }
         writer.flush().unwrap();
         let l = data.len();
-        let (payload, checksum) = data.split_at(l - if l > 33 {2} else {1});
+        let (payload, checksum) = data.split_at(l - if l > 33 { 2 } else { 1 });
         if Self::checksum(payload).as_slice() != checksum {
             return Err(Error::Mnemonic("Checksum failed"));
         }
@@ -86,9 +91,9 @@ impl Mnemonic {
         let len = match entropy {
             MasterKeyEntropy::Sufficient => 16,
             MasterKeyEntropy::Double => 32,
-            MasterKeyEntropy::Paranoid => 64
+            MasterKeyEntropy::Paranoid => 64,
         };
-        let mut random = vec!(0u8; len);
+        let mut random = vec![0u8; len];
         thread_rng().fill_bytes(random.as_mut_slice());
         Self::new(random.as_slice())
     }
@@ -112,7 +117,7 @@ impl Mnemonic {
         Ok(Mnemonic(mnemonic))
     }
 
-    pub fn extend (&self) -> Result<Mnemonic, Error> {
+    pub fn extend(&self) -> Result<Mnemonic, Error> {
         if self.0.len() != 12 {
             return Err(Error::Mnemonic(
                 "Can only extend mnemonic of 12 words to 24 words",
@@ -148,7 +153,7 @@ impl Mnemonic {
         sha2.result(&mut hash);
         let mut check_cursor = Cursor::new(&hash);
         let mut check_reader = BitStreamReader::new(&mut check_cursor);
-        for _ in 0..data.len()/4 {
+        for _ in 0..data.len() / 4 {
             writer.write(check_reader.read(1).unwrap(), 1).unwrap();
         }
         writer.flush().unwrap();
@@ -224,7 +229,11 @@ mod test {
         let short = Mnemonic::new_random(MasterKeyEntropy::Sufficient).unwrap();
         let extended = short.extend().unwrap();
         let check = Mnemonic::from_str(extended.to_string().as_str()).unwrap();
-        assert!(short.iter().zip(check.iter()).take(12).all(|(a, b)| *a == *b));
+        assert!(short
+            .iter()
+            .zip(check.iter())
+            .take(12)
+            .all(|(a, b)| *a == *b));
     }
 }
 

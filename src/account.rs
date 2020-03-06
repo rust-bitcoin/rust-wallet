@@ -18,6 +18,7 @@
 //!
 //! Accounts compatible with BIP32, BIP39, BIP44, BIP49, BIP84
 //!
+use bitcoin::hashes::{hash160, Hash};
 use bitcoin::util::bip32::ExtendedPubKey;
 use bitcoin::{
     blockdata::script::Builder,
@@ -30,7 +31,6 @@ use bitcoin::{
     util::bip32::{ChildNumber, ExtendedPrivKey},
     Address, OutPoint, PrivateKey, PublicKey, Script, Transaction,
 };
-use bitcoin_hashes::{hash160, Hash};
 use crypto::{
     aes, blockmodes, buffer,
     buffer::{BufferResult, ReadBuffer, WriteBuffer},
@@ -885,7 +885,6 @@ mod test {
     use bitcoin::blockdata::transaction::{OutPoint, TxIn, TxOut};
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
-    use bitcoin_hashes::sha256d;
     use hex::decode;
     use rand::Rng;
     use serde_json::Value;
@@ -920,7 +919,7 @@ mod test {
         let input_transaction = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
-                    txid: sha256d::Hash::default(),
+                    txid: bitcoin::Txid::default(),
                     vout: 0,
                 },
                 sequence: RBF,
@@ -990,7 +989,7 @@ mod test {
         let input_transaction = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
-                    txid: sha256d::Hash::default(),
+                    txid: bitcoin::Txid::default(),
                     vout: 0,
                 },
                 sequence: RBF,
@@ -1060,7 +1059,7 @@ mod test {
         let input_transaction = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
-                    txid: sha256d::Hash::default(),
+                    txid: bitcoin::Txid::default(),
                     vout: 0,
                 },
                 sequence: RBF,
@@ -1144,7 +1143,7 @@ mod test {
         let input_transaction = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
-                    txid: sha256d::Hash::default(),
+                    txid: bitcoin::Txid::default(),
                     vout: 0,
                 },
                 sequence: RBF,
@@ -1232,7 +1231,7 @@ mod test {
         let input_transaction = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
-                    txid: sha256d::Hash::default(),
+                    txid: bitcoin::Txid::default(),
                     vout: 0,
                 },
                 sequence: RBF,

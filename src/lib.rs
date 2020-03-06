@@ -22,12 +22,10 @@
 #![forbid(unsafe_code)]
 
 extern crate bitcoin;
-extern crate bitcoin_hashes;
 extern crate crypto;
 #[cfg(test)]
 extern crate hex;
 extern crate rand;
-extern crate secp256k1;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;

@@ -39,7 +39,7 @@ pub enum Error {
     /// key derivation error
     KeyDerivation(bip32::Error),
     /// sekp256k1 error
-    SecpError(secp256k1::Error),
+    SecpError(bitcoin::secp256k1::Error),
     /// cipher error
     SymmetricCipherError(symmetriccipher::SymmetricCipherError),
 }
@@ -135,8 +135,8 @@ impl convert::From<symmetriccipher::SymmetricCipherError> for Error {
     }
 }
 
-impl convert::From<secp256k1::Error> for Error {
-    fn from(err: secp256k1::Error) -> Error {
+impl convert::From<bitcoin::secp256k1::Error> for Error {
+    fn from(err: bitcoin::secp256k1::Error) -> Error {
         Error::SecpError(err)
     }
 }

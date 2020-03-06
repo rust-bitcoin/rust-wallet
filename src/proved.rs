@@ -18,15 +18,15 @@
 //!
 //!
 
+use bitcoin::hashes::{sha256d, Hash, HashEngine};
 use bitcoin::{BitcoinHash, Block, Transaction};
-use bitcoin_hashes::{sha256d, Hash, HashEngine};
 
 /// A confirmed transaction with its SPV proof
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ProvedTransaction {
     transaction: Transaction,
     merkle_path: Vec<(bool, sha256d::Hash)>,
-    block_hash: sha256d::Hash,
+    block_hash: bitcoin::BlockHash,
 }
 
 impl ProvedTransaction {
@@ -43,25 +43,26 @@ impl ProvedTransaction {
         self.transaction.clone()
     }
 
-    pub fn get_block_hash(&self) -> &sha256d::Hash {
+    pub fn get_block_hash(&self) -> &bitcoin::BlockHash {
         &self.block_hash
     }
 
     /// compute the merkle root implied by the SPV proof
-    pub fn merkle_root(&self) -> sha256d::Hash {
-        self.merkle_path
-            .iter()
-            .fold(self.transaction.txid(), |a, (left, h)| {
-                let mut engine = sha256d::Hash::engine();
+    pub fn merkle_root(&self) -> bitcoin::TxMerkleNode {
+        self.merkle_path.iter().fold(
+            bitcoin::TxMerkleNode::from_inner(self.transaction.txid().into_inner()),
+            |a, (left, h)| {
+                let mut encoder = bitcoin::TxMerkleNode::engine();
                 if *left {
-                    engine.input(&h[..]);
-                    engine.input(&a[..]);
+                    encoder.input(&h[..]);
+                    encoder.input(&a[..]);
                 } else {
-                    engine.input(&a[..]);
-                    engine.input(&h[..]);
+                    encoder.input(&a[..]);
+                    encoder.input(&h[..]);
                 }
-                sha256d::Hash::from_engine(engine)
-            })
+                bitcoin::TxMerkleNode::from_engine(encoder)
+            },
+        )
     }
 
     /// compute a proof for a transaction in a block
@@ -102,7 +103,11 @@ impl ProvedTransaction {
             (result, op)
         }
 
-        let mut ids = block.txdata.iter().map(|t| t.txid()).collect::<Vec<_>>();
+        let mut ids = block
+            .txdata
+            .iter()
+            .map(|t| t.txid().as_hash())
+            .collect::<Vec<_>>();
         let mut proof = Vec::new();
         while let (i, Some((t, left, hash))) = binhash(ids.as_slice(), track) {
             proof.push((left, hash));

@@ -22,7 +22,6 @@ use std::collections::HashMap;
 
 use bitcoin::Block;
 use bitcoin::{OutPoint, Script, Transaction, TxOut};
-use bitcoin_hashes::sha256d;
 use rand::thread_rng;
 
 use account::{KeyDerivation, MasterAccount};
@@ -44,7 +43,7 @@ pub struct Coins {
     /// confirmed coins (these have SPV proofs)
     confirmed: HashMap<OutPoint, Coin>,
     /// SPV proofs of transactions confirming coins
-    proofs: HashMap<sha256d::Hash, ProvedTransaction>,
+    proofs: HashMap<bitcoin::Txid, ProvedTransaction>,
 }
 
 impl Coins {
@@ -130,13 +129,13 @@ impl Coins {
         &self.unconfirmed
     }
 
-    pub fn proofs(&self) -> &HashMap<sha256d::Hash, ProvedTransaction> {
+    pub fn proofs(&self) -> &HashMap<bitcoin::Txid, ProvedTransaction> {
         &self.proofs
     }
 
     pub fn available_balance<H>(&self, height: u32, block_height: H) -> u64
     where
-        H: Fn(&sha256d::Hash) -> Option<u32>,
+        H: Fn(&bitcoin::BlockHash) -> Option<u32>,
     {
         self.available_coins(height, block_height)
             .iter()
@@ -146,7 +145,7 @@ impl Coins {
 
     pub fn available_coins<H>(&self, height: u32, block_height: H) -> Vec<(OutPoint, Coin, u32)>
     where
-        H: Fn(&sha256d::Hash) -> Option<u32>,
+        H: Fn(&bitcoin::BlockHash) -> Option<u32>,
     {
         self.confirmed
             .iter()
@@ -182,7 +181,7 @@ impl Coins {
     }
 
     /// unwind the tip of the trunk
-    pub fn unwind_tip(&mut self, block_hash: &sha256d::Hash) {
+    pub fn unwind_tip(&mut self, block_hash: &bitcoin::BlockHash) {
         // this means we might have lost control of coins at least temporarily
         let lost_coins = self
             .proofs
@@ -280,7 +279,7 @@ impl Coins {
         block_height: H,
     ) -> Vec<(OutPoint, Coin, u32)>
     where
-        H: Fn(&sha256d::Hash) -> Option<u32>,
+        H: Fn(&bitcoin::BlockHash) -> Option<u32>,
     {
         use rand::prelude::SliceRandom;
         // TODO: knapsack
@@ -326,17 +325,16 @@ mod test {
     use bitcoin::blockdata::script::Builder;
     use bitcoin::util::bip32::ExtendedPubKey;
     use bitcoin::{
-        network::constants::Network, util::hash::MerkleRoot, Address, BitcoinHash, Block,
-        BlockHeader, OutPoint, Transaction, TxIn, TxOut,
+        network::constants::Network, Address, BitcoinHash, Block, BlockHeader, OutPoint,
+        Transaction, TxIn, TxOut,
     };
-    use bitcoin_hashes::sha256d;
 
     use account::{Account, AccountAddressType, MasterAccount, Unlocker};
     use coins::Coins;
 
     const NEW_COINS: u64 = 5000000000;
 
-    fn new_block(prev: &sha256d::Hash) -> Block {
+    fn new_block(prev: &bitcoin::BlockHash) -> Block {
         Block {
             header: BlockHeader {
                 version: 1,
@@ -347,7 +345,7 @@ mod test {
                 nonce: 0,
                 bits: 0x1d00ffff,
                 prev_blockhash: prev.clone(),
-                merkle_root: sha256d::Hash::default(),
+                merkle_root: bitcoin::TxMerkleNode::default(),
             },
             txdata: Vec::new(),
         }
@@ -361,7 +359,7 @@ mod test {
                 sequence: 0xffffffff,
                 witness: Vec::new(),
                 previous_output: OutPoint {
-                    txid: sha256d::Hash::default(),
+                    txid: bitcoin::Txid::default(),
                     vout: 0,
                 },
                 script_sig: Builder::new().push_int(height as i64).into_script(),
@@ -390,7 +388,7 @@ mod test {
         master
     }
 
-    fn mine(tip: &sha256d::Hash, height: u32, miner: Address) -> Block {
+    fn mine(tip: &bitcoin::BlockHash, height: u32, miner: Address) -> Block {
         let mut block = new_block(tip);
         add_tx(&mut block, coin_base(miner, height));
         block
