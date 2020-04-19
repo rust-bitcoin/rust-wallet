@@ -307,6 +307,7 @@ impl Unlocker {
             Network::Bitcoin => 0,
             Network::Testnet => 1,
             Network::Regtest => 1,
+            Network::Signet => 1,
         };
         let by_coin_type = by_purpose.1.entry(coin_type).or_insert((
             self.context
