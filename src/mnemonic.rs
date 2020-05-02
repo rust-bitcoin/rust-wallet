@@ -29,18 +29,21 @@ use crypto::{
 use error::Error;
 use rand::{thread_rng, RngCore};
 use std::io::Cursor;
+use std::fmt::{Display, Formatter, Error as FmtError};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Mnemonic(Vec<usize>);
 
-impl ToString for Mnemonic {
-    fn to_string(&self) -> String {
-        self.0
+impl Display for Mnemonic {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
+        let seed_stirng = self.0
             .iter()
             .map(|i| WORDS[*i])
             .collect::<Vec<_>>()
             .as_slice()
-            .join(" ")
+            .join(" ");
+
+        write!(f, "{}", seed_stirng)
     }
 }
 
@@ -195,10 +198,8 @@ mod test {
             let m = values[1].as_str().unwrap();
             let mnemonic = Mnemonic::from_str(m).unwrap();
             let seed = mnemonic.to_seed(Some("TREZOR"));
-            assert_eq!(
-                mnemonic.to_string(),
-                Mnemonic::new(data.as_slice()).unwrap().to_string()
-            );
+            // Test Display for Mnemonic
+            assert_eq!(format!("{}", mnemonic), Mnemonic::new(data.as_slice()).unwrap().to_string());
             assert_eq!(seed.0, decode(values[2].as_str().unwrap()).unwrap());
 
             if values.len() == 4 {
