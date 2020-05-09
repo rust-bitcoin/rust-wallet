@@ -198,9 +198,12 @@ mod test {
             let m = values[1].as_str().unwrap();
             let mnemonic = Mnemonic::from_str(m).unwrap();
             let seed = mnemonic.to_seed(Some("TREZOR"));
-            // Test Display for Mnemonic
-            assert_eq!(format!("{}", mnemonic), Mnemonic::new(data.as_slice()).unwrap().to_string());
             assert_eq!(seed.0, decode(values[2].as_str().unwrap()).unwrap());
+
+            // Test Display and ToString for Mnemonic
+            let mnemonic_string = Mnemonic::new(data.as_slice()).unwrap().to_string();
+            assert_eq!(format!("{}", mnemonic), mnemonic_string);
+
 
             if values.len() == 4 {
                 let pk = values[3].as_str().unwrap();
