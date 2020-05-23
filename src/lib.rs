@@ -24,9 +24,8 @@
 pub extern crate bitcoin;
 pub extern crate crypto;
 extern crate rand;
-extern crate serde;
 #[macro_use]
-extern crate serde_derive;
+extern crate serde;
 
 #[cfg(test)]
 extern crate serde_json;
