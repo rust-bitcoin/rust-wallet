@@ -880,12 +880,12 @@ mod test {
     use std::io::Read;
     use std::path::PathBuf;
 
+    use bitcoin::hashes::hex::FromHex;
     use bitcoin::blockdata::opcodes::all;
     use bitcoin::blockdata::script::Builder;
     use bitcoin::blockdata::transaction::{OutPoint, TxIn, TxOut};
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
-    use hex::decode;
     use rand::Rng;
     use serde_json::Value;
 
@@ -1352,7 +1352,7 @@ mod test {
         let json: Value = serde_json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
         for test in tests {
-            let seed = Seed(decode(test["seed"].as_str().unwrap()).unwrap());
+            let seed = Seed(Vec::<u8>::from_hex(test["seed"].as_str().unwrap()).unwrap());
             let master_private = context.master_private_key(Network::Bitcoin, &seed).unwrap();
             assert_eq!(
                 test["private"].as_str().unwrap(),

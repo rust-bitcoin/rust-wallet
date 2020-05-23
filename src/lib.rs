@@ -23,8 +23,6 @@
 
 pub extern crate bitcoin;
 pub extern crate crypto;
-#[cfg(test)]
-extern crate hex;
 extern crate rand;
 extern crate serde;
 #[macro_use]
