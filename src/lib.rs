@@ -24,6 +24,8 @@
 pub extern crate bitcoin;
 pub extern crate crypto;
 extern crate rand;
+
+#[cfg(feature = "serde")]
 #[macro_use]
 extern crate serde;
 

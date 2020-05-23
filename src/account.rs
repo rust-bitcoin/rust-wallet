@@ -758,7 +758,8 @@ impl Account {
 }
 
 /// instantiated key of an account
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct InstantiatedKey {
     pub public: PublicKey,
     pub script_code: Script,

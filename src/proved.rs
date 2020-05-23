@@ -22,7 +22,8 @@ use bitcoin::hashes::{sha256d, Hash, HashEngine};
 use bitcoin::{BitcoinHash, Block, Transaction};
 
 /// A confirmed transaction with its SPV proof
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProvedTransaction {
     transaction: Transaction,
     merkle_path: Vec<(bool, sha256d::Hash)>,
