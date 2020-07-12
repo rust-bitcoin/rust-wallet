@@ -46,19 +46,7 @@ pub enum Error {
 
 impl error::Error for Error {
     fn description(&self) -> &str {
-        match *self {
-            Error::Passphrase => "wrong passphrase",
-            Error::Network => "wrong network",
-            Error::Unsupported(s) => s,
-            Error::Mnemonic(s) => s,
-            Error::IO(ref err) => err.description(),
-            Error::KeyDerivation(ref err) => err.description(),
-            Error::SecpError(ref err) => err.description(),
-            Error::SymmetricCipherError(ref err) => match err {
-                &symmetriccipher::SymmetricCipherError::InvalidLength => "invalid length",
-                &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
-            },
-        }
+        "description() is deprecated; use Display"
     }
 
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
@@ -110,8 +98,7 @@ impl convert::From<Error> for io::Error {
         match err {
             Error::IO(e) => e,
             _ => {
-                use std::error::Error;
-                io::Error::new(io::ErrorKind::Other, err.description())
+                io::Error::new(io::ErrorKind::Other, err.to_string())
             }
         }
     }
