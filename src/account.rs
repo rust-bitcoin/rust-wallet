@@ -677,7 +677,7 @@ impl Account {
                         }
                         AccountAddressType::P2WPKH => {
                             if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(Error::Unsupported("can only sig all inputs for now"));
+                                return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Script::new();
                             let hasher =
@@ -698,7 +698,7 @@ impl Account {
                         }
                         AccountAddressType::P2SHWPKH => {
                             if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(Error::Unsupported("can only sig all inputs for now"));
+                                return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Builder::new()
                                 .push_slice(
@@ -730,7 +730,7 @@ impl Account {
                         }
                         AccountAddressType::P2WSH(_) => {
                             if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
-                                return Err(Error::Unsupported("can only sig all inputs for now"));
+                                return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Script::new();
                             let hasher =
