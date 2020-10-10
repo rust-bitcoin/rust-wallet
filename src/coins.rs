@@ -325,7 +325,7 @@ use bitcoin::hashes::hex::FromHex;
     use bitcoin::blockdata::script::Builder;
     use bitcoin::util::bip32::ExtendedPubKey;
     use bitcoin::{
-        network::constants::Network, Address, BitcoinHash, Block, BlockHeader, OutPoint,
+        network::constants::Network, Address, Block, BlockHeader, OutPoint,
         Transaction, TxIn, TxOut,
     };
 
@@ -406,10 +406,10 @@ use bitcoin::hashes::hex::FromHex;
             .address
             .clone();
         let genesis = genesis_block(Network::Testnet);
-        let next = mine(&genesis.bitcoin_hash(), 1, miner);
+        let next = mine(&genesis.block_hash(), 1, miner);
         coins.process(&mut master, &next);
         assert_eq!(coins.confirmed_balance(), NEW_COINS);
-        coins.unwind_tip(&next.bitcoin_hash());
+        coins.unwind_tip(&next.block_hash());
         assert_eq!(coins.confirmed_balance(), 0);
     }
 }

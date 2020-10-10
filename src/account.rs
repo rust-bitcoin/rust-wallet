@@ -641,8 +641,9 @@ impl Account {
         R: Fn(&OutPoint) -> Option<TxOut>,
     {
         let mut signed = 0;
+        //TODO(stevenroose) try to prevent this clone here
         let txclone = transaction.clone();
-        let mut bip143hasher: Option<bip143::SighashComponents> = None;
+        let mut bip143hasher = bip143::SigHashCache::new(&txclone);
         for (ix, input) in transaction.input.iter_mut().enumerate() {
             if let Some(spend) = resolver(&input.previous_output) {
                 if let Some((kix, instantiated)) = self
@@ -680,14 +681,12 @@ impl Account {
                                 return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Script::new();
-                            let hasher =
-                                bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(
-                                &txclone.input[ix],
+                            let sighash = bip143hasher.signature_hash(
+                                ix,
                                 &instantiated.script_code,
                                 spend.value,
+                                hash_type,
                             );
-                            bip143hasher = Some(hasher);
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
                             with_hashtype.push(hash_type.as_u32() as u8);
@@ -712,14 +711,12 @@ impl Account {
                                         .into_script()[..],
                                 )
                                 .into_script();
-                            let hasher =
-                                bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(
-                                &txclone.input[ix],
+                            let sighash = bip143hasher.signature_hash(
+                                ix,
                                 &instantiated.script_code,
                                 spend.value,
+                                hash_type,
                             );
-                            bip143hasher = Some(hasher);
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
                             with_hashtype.push(hash_type.as_u32() as u8);
@@ -733,14 +730,12 @@ impl Account {
                                 return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Script::new();
-                            let hasher =
-                                bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(
-                                &txclone.input[ix],
+                            let sighash = bip143hasher.signature_hash(
+                                ix,
                                 &instantiated.script_code,
                                 spend.value,
+                                hash_type,
                             );
-                            bip143hasher = Some(hasher);
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
                             with_hashtype.push(hash_type.as_u32() as u8);
@@ -789,10 +784,15 @@ impl InstantiatedKey {
             context.tweak_exp_add(&mut public, tweak)?;
         }
         let script_code = scripter(&public, csv);
+        assert!(public.compressed);
         let address = match address_type {
             AccountAddressType::P2PKH => Address::p2pkh(&public, network),
-            AccountAddressType::P2SHWPKH => Address::p2shwpkh(&public, network),
-            AccountAddressType::P2WPKH => Address::p2wpkh(&public, network),
+            AccountAddressType::P2SHWPKH => {
+                Address::p2shwpkh(&public, network).expect("compressed pubkey")
+            }
+            AccountAddressType::P2WPKH => {
+                Address::p2wpkh(&public, network).expect("compressed pubkey")
+            }
             AccountAddressType::P2WSH(_) => Address::p2wsh(&script_code, network),
         };
         Ok(InstantiatedKey {
