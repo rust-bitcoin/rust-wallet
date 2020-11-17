@@ -50,7 +50,7 @@ master.add_account(account);
 // account number 1, sub-account 0 (which usually means receiver) BIP32 look-ahead 10
 let account = Account::new(&mut unlocker, AccountAddressType::P2WPKH, 1, 0, 10).unwrap();
 master.add_account(account);
-// account number 1, sub-account 0 (which usually means change) BIP32 look-ahead 10
+// account number 1, sub-account 1 (which usually means change) BIP32 look-ahead 10
 let account = Account::new(&mut unlocker, AccountAddressType::P2WPKH, 1, 1, 10).unwrap();
 master.add_account(account);
 
