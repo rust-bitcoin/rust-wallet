@@ -303,11 +303,7 @@ impl Unlocker {
             )?,
             HashMap::new(),
         ));
-        let coin_type = match self.network {
-            Network::Bitcoin => 0,
-            Network::Testnet => 1,
-            Network::Regtest => 1,
-        };
+        let coin_type = if self.network == Network::Bitcoin { 0 } else { 1 };
         let by_coin_type = by_purpose.1.entry(coin_type).or_insert((
             self.context
                 .private_child(&by_purpose.0, ChildNumber::Hardened { index: coin_type })?,
@@ -790,8 +786,8 @@ impl InstantiatedKey {
         let script_code = scripter(&public, csv);
         let address = match address_type {
             AccountAddressType::P2PKH => Address::p2pkh(&public, network),
-            AccountAddressType::P2SHWPKH => Address::p2shwpkh(&public, network),
-            AccountAddressType::P2WPKH => Address::p2wpkh(&public, network),
+            AccountAddressType::P2SHWPKH => Address::p2shwpkh(&public, network)?,
+            AccountAddressType::P2WPKH => Address::p2wpkh(&public, network)?,
             AccountAddressType::P2WSH(_) => Address::p2wsh(&script_code, network),
         };
         Ok(InstantiatedKey {

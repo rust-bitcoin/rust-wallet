@@ -26,6 +26,8 @@ use crypto::symmetriccipher;
 
 /// An error class to offer a unified error interface upstream
 pub enum Error {
+    /// address error
+    Address(bitcoin::util::address::Error),
     /// Unsupported
     Unsupported(&'static str),
     /// mnemonic related error
@@ -51,6 +53,7 @@ impl error::Error for Error {
 
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
+            Error::Address(ref err) => Some(err),
             Error::Network => None,
             Error::Passphrase => None,
             Error::Unsupported(_) => None,
@@ -68,6 +71,7 @@ impl fmt::Display for Error {
         match *self {
             // Both underlying errors already impl `Display`, so we defer to
             // their implementations.
+            Error::Address(ref err) => write!(f, "invalid address: {}", err),
             Error::Passphrase => write!(f, "wrong passphrase"),
             Error::Network => write!(f, "wrong network"),
             Error::Unsupported(ref s) => write!(f, "Unsupported: {}", s),
@@ -125,5 +129,11 @@ impl convert::From<symmetriccipher::SymmetricCipherError> for Error {
 impl convert::From<bitcoin::secp256k1::Error> for Error {
     fn from(err: bitcoin::secp256k1::Error) -> Error {
         Error::SecpError(err)
+    }
+}
+
+impl convert::From<bitcoin::util::address::Error> for Error {
+    fn from(err: bitcoin::util::address::Error) -> Error {
+        Error::Address(err)
     }
 }

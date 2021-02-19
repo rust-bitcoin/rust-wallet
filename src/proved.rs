@@ -19,21 +19,21 @@
 //!
 
 use bitcoin::hashes::{sha256d, Hash, HashEngine};
-use bitcoin::{BitcoinHash, Block, Transaction};
+use bitcoin::{BlockHash, Block, Transaction};
 
 /// A confirmed transaction with its SPV proof
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ProvedTransaction {
     transaction: Transaction,
     merkle_path: Vec<(bool, sha256d::Hash)>,
-    block_hash: bitcoin::BlockHash,
+    block_hash: BlockHash,
 }
 
 impl ProvedTransaction {
     pub fn new(block: &Block, txnr: usize) -> ProvedTransaction {
         let transaction = block.txdata[txnr].clone();
         ProvedTransaction {
-            block_hash: block.header.bitcoin_hash(),
+            block_hash: block.header.block_hash(),
             merkle_path: Self::compute_proof(txnr, block),
             transaction,
         }
@@ -43,7 +43,7 @@ impl ProvedTransaction {
         self.transaction.clone()
     }
 
-    pub fn get_block_hash(&self) -> &bitcoin::BlockHash {
+    pub fn get_block_hash(&self) -> &BlockHash {
         &self.block_hash
     }
 
@@ -134,7 +134,7 @@ mod test {
             let pt = ProvedTransaction {
                 transaction: tx.clone(),
                 merkle_path: proof,
-                block_hash: block.header.bitcoin_hash(),
+                block_hash: block.header.block_hash(),
             };
             assert_eq!(pt.merkle_root(), block.header.merkle_root);
         }
