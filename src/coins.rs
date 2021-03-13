@@ -20,8 +20,7 @@
 
 use std::collections::HashMap;
 
-use bitcoin::Block;
-use bitcoin::{OutPoint, Script, Transaction, TxOut};
+use bitcoin::{Block, OutPoint, Script, Transaction, TxOut};
 use rand::thread_rng;
 
 use account::{KeyDerivation, MasterAccount};
@@ -321,11 +320,12 @@ mod test {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+use bitcoin::hashes::hex::FromHex;
     use bitcoin::blockdata::constants::genesis_block;
     use bitcoin::blockdata::script::Builder;
     use bitcoin::util::bip32::ExtendedPubKey;
     use bitcoin::{
-        network::constants::Network, Address, BitcoinHash, Block, BlockHeader, OutPoint,
+        network::constants::Network, Address, Block, BlockHeader, OutPoint,
         Transaction, TxIn, TxOut,
     };
 
@@ -378,7 +378,7 @@ mod test {
 
     fn new_master() -> MasterAccount {
         let mut master = MasterAccount::from_encrypted(
-            hex::decode("e541bc73d9990b290cc4a8d8ff4592183171d1808a32695b1835aa3c12f50f34849a0dc5b730c507f19f22af393b5e5453e0974977922dbba513dadf81d364d8e204209ea02af35693b49b3b09191f01").unwrap().as_slice(),
+            Vec::<u8>::from_hex("e541bc73d9990b290cc4a8d8ff4592183171d1808a32695b1835aa3c12f50f34849a0dc5b730c507f19f22af393b5e5453e0974977922dbba513dadf81d364d8e204209ea02af35693b49b3b09191f01").unwrap().as_slice(),
             ExtendedPubKey::from_str("tpubD6NzVbkrYhZ4YUqaTmpewwbvSoA4dkwzGzvwGcUbwbRyu8i6dCSroCsvFmC6qzQgJxddMfA6Mg8r6XmkJVhQ8ihAWzfRBYTG5o28AC5HWX2").unwrap(),
             1567260002);
         let mut unlocker = Unlocker::new_for_master(&master, "whatever").unwrap();
@@ -406,10 +406,10 @@ mod test {
             .address
             .clone();
         let genesis = genesis_block(Network::Testnet);
-        let next = mine(&genesis.bitcoin_hash(), 1, miner);
+        let next = mine(&genesis.block_hash(), 1, miner);
         coins.process(&mut master, &next);
         assert_eq!(coins.confirmed_balance(), NEW_COINS);
-        coins.unwind_tip(&next.bitcoin_hash());
+        coins.unwind_tip(&next.block_hash());
         assert_eq!(coins.confirmed_balance(), 0);
     }
 }

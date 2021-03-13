@@ -678,6 +678,7 @@ mod test {
     use std::collections::HashSet;
     use std::str::FromStr;
 
+    use bitcoin::hashes::hex::ToHex;
     use bitcoin::network::constants::Network;
     use bitcoin::Address;
     use rand::{thread_rng, Rng};
@@ -822,13 +823,8 @@ mod test {
                     .iter()
                     .map(|v| Share::from_mnemonic(v.as_str().unwrap()).unwrap())
                     .collect::<Vec<_>>();
-                assert_eq!(
-                    result,
-                    hex::encode(
-                        ShamirSecretSharing::combine(&shares, Some("TREZOR"))
-                            .unwrap()
-                            .0
-                    )
+                assert_eq!(result,
+                    ShamirSecretSharing::combine(&shares, Some("TREZOR")).unwrap().0.to_hex(),
                 );
             }
         }

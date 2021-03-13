@@ -167,8 +167,8 @@ mod test {
     use std::io::Read;
     use std::path::PathBuf;
 
+    use bitcoin::hashes::hex::FromHex;
     use bitcoin::network::constants::Network;
-    use hex::decode;
     use serde_json::Value;
 
     use context::SecpContext;
@@ -191,7 +191,7 @@ mod test {
 
         for t in 0..tests.len() {
             let values = tests[t].as_array().unwrap();
-            let data = decode(values[0].as_str().unwrap()).unwrap();
+            let data = Vec::<u8>::from_hex(values[0].as_str().unwrap()).unwrap();
             let m = values[1].as_str().unwrap();
             let mnemonic = Mnemonic::from_str(m).unwrap();
             let seed = mnemonic.to_seed(Some("TREZOR"));
@@ -199,7 +199,7 @@ mod test {
                 mnemonic.to_string(),
                 Mnemonic::new(data.as_slice()).unwrap().to_string()
             );
-            assert_eq!(seed.0, decode(values[2].as_str().unwrap()).unwrap());
+            assert_eq!(seed.0, Vec::<u8>::from_hex(values[2].as_str().unwrap()).unwrap());
 
             if values.len() == 4 {
                 let pk = values[3].as_str().unwrap();

@@ -21,14 +21,14 @@
 #![deny(unused_must_use)]
 #![forbid(unsafe_code)]
 
-extern crate bitcoin;
-extern crate crypto;
-#[cfg(test)]
-extern crate hex;
+pub extern crate bitcoin;
+pub extern crate crypto;
 extern crate rand;
-extern crate serde;
+
+#[cfg(feature = "serde")]
 #[macro_use]
-extern crate serde_derive;
+extern crate serde;
+
 #[cfg(test)]
 extern crate serde_json;
 

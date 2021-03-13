@@ -307,6 +307,7 @@ impl Unlocker {
             Network::Bitcoin => 0,
             Network::Testnet => 1,
             Network::Regtest => 1,
+            Network::Signet => 1,
         };
         let by_coin_type = by_purpose.1.entry(coin_type).or_insert((
             self.context
@@ -641,8 +642,9 @@ impl Account {
         R: Fn(&OutPoint) -> Option<TxOut>,
     {
         let mut signed = 0;
+        //TODO(stevenroose) try to prevent this clone here
         let txclone = transaction.clone();
-        let mut bip143hasher: Option<bip143::SighashComponents> = None;
+        let mut bip143hasher = bip143::SigHashCache::new(&txclone);
         for (ix, input) in transaction.input.iter_mut().enumerate() {
             if let Some(spend) = resolver(&input.previous_output) {
                 if let Some((kix, instantiated)) = self
@@ -680,14 +682,12 @@ impl Account {
                                 return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Script::new();
-                            let hasher =
-                                bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(
-                                &txclone.input[ix],
+                            let sighash = bip143hasher.signature_hash(
+                                ix,
                                 &instantiated.script_code,
                                 spend.value,
+                                hash_type,
                             );
-                            bip143hasher = Some(hasher);
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
                             with_hashtype.push(hash_type.as_u32() as u8);
@@ -712,14 +712,12 @@ impl Account {
                                         .into_script()[..],
                                 )
                                 .into_script();
-                            let hasher =
-                                bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(
-                                &txclone.input[ix],
+                            let sighash = bip143hasher.signature_hash(
+                                ix,
                                 &instantiated.script_code,
                                 spend.value,
+                                hash_type,
                             );
-                            bip143hasher = Some(hasher);
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
                             with_hashtype.push(hash_type.as_u32() as u8);
@@ -733,14 +731,12 @@ impl Account {
                                 return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Script::new();
-                            let hasher =
-                                bip143hasher.unwrap_or(bip143::SighashComponents::new(&txclone));
-                            let sighash = hasher.sighash_all(
-                                &txclone.input[ix],
+                            let sighash = bip143hasher.signature_hash(
+                                ix,
                                 &instantiated.script_code,
                                 spend.value,
+                                hash_type,
                             );
-                            bip143hasher = Some(hasher);
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
                             with_hashtype.push(hash_type.as_u32() as u8);
@@ -758,7 +754,8 @@ impl Account {
 }
 
 /// instantiated key of an account
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct InstantiatedKey {
     pub public: PublicKey,
     pub script_code: Script,
@@ -788,10 +785,15 @@ impl InstantiatedKey {
             context.tweak_exp_add(&mut public, tweak)?;
         }
         let script_code = scripter(&public, csv);
+        assert!(public.compressed);
         let address = match address_type {
             AccountAddressType::P2PKH => Address::p2pkh(&public, network),
-            AccountAddressType::P2SHWPKH => Address::p2shwpkh(&public, network),
-            AccountAddressType::P2WPKH => Address::p2wpkh(&public, network),
+            AccountAddressType::P2SHWPKH => {
+                Address::p2shwpkh(&public, network).expect("compressed pubkey")
+            }
+            AccountAddressType::P2WPKH => {
+                Address::p2wpkh(&public, network).expect("compressed pubkey")
+            }
             AccountAddressType::P2WSH(_) => Address::p2wsh(&script_code, network),
         };
         Ok(InstantiatedKey {
@@ -880,12 +882,12 @@ mod test {
     use std::io::Read;
     use std::path::PathBuf;
 
+    use bitcoin::hashes::hex::FromHex;
     use bitcoin::blockdata::opcodes::all;
     use bitcoin::blockdata::script::Builder;
     use bitcoin::blockdata::transaction::{OutPoint, TxIn, TxOut};
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
-    use hex::decode;
     use rand::Rng;
     use serde_json::Value;
 
@@ -1352,7 +1354,7 @@ mod test {
         let json: Value = serde_json::from_str(&data).unwrap();
         let tests = json.as_array().unwrap();
         for test in tests {
-            let seed = Seed(decode(test["seed"].as_str().unwrap()).unwrap());
+            let seed = Seed(Vec::<u8>::from_hex(test["seed"].as_str().unwrap()).unwrap());
             let master_private = context.master_private_key(Network::Bitcoin, &seed).unwrap();
             assert_eq!(
                 test["private"].as_str().unwrap(),
