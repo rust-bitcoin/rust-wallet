@@ -1,5 +1,15 @@
 [![Safety Dance](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance/)
 # Bitcoin Wallet Library in Rust
+
+**Archiving**
+
+This library is being archived:
+
+- No one is currently working on this library.
+- If you are writing a Bitcoin wallet [BDK](https://github.com/bitcoindevkit/bdk) may serve your needs.
+
+Thanks!
+
 This is a library to build Bitcoin wallets with Rust. 
 It uses BIP32 key derivation, BIP39 mnemonics and BIP44, BIP48, BIP84 key 
 hierarchy which makes it compatible to TREZOR, Ledger and many other
