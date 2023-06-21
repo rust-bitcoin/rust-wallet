@@ -42,6 +42,12 @@ pub enum Error {
     SecpError(bitcoin::secp256k1::Error),
     /// cipher error
     SymmetricCipherError(symmetriccipher::SymmetricCipherError),
+    // sighash error
+    SighashError(bitcoin::util::sighash::Error),
+    // tryfromslice error
+    TryFromSliceError(std::array::TryFromSliceError),
+    // outofrange error
+    OutOfRangeError(bitcoin::secp256k1::scalar::OutOfRangeError),
 }
 
 impl error::Error for Error {
@@ -59,6 +65,9 @@ impl error::Error for Error {
             Error::KeyDerivation(ref err) => Some(err),
             Error::SecpError(ref err) => Some(err),
             Error::SymmetricCipherError(_) => None,
+            Error::SighashError(ref err) => Some(err),
+            Error::TryFromSliceError(ref err) => Some(err),
+            Error::OutOfRangeError(ref err) => Some(err),
         }
     }
 }
@@ -83,6 +92,9 @@ impl fmt::Display for Error {
                     &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
                 }
             ),
+            Error::SighashError(ref err) => write!(f, "Sighash error: {}", err),
+            Error::TryFromSliceError(ref err) => write!(f, "TryFromSlice error: {}", err),
+            Error::OutOfRangeError(ref err) => write!(f, "OutOfRangeError error: {}", err),
         }
     }
 }
@@ -97,9 +109,7 @@ impl convert::From<Error> for io::Error {
     fn from(err: Error) -> io::Error {
         match err {
             Error::IO(e) => e,
-            _ => {
-                io::Error::new(io::ErrorKind::Other, err.to_string())
-            }
+            _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
         }
     }
 }
@@ -125,5 +135,23 @@ impl convert::From<symmetriccipher::SymmetricCipherError> for Error {
 impl convert::From<bitcoin::secp256k1::Error> for Error {
     fn from(err: bitcoin::secp256k1::Error) -> Error {
         Error::SecpError(err)
+    }
+}
+
+impl convert::From<bitcoin::util::sighash::Error> for Error {
+    fn from(err: bitcoin::util::sighash::Error) -> Error {
+        Error::SighashError(err)
+    }
+}
+
+impl convert::From<std::array::TryFromSliceError> for Error {
+    fn from(err: std::array::TryFromSliceError) -> Error {
+        Error::TryFromSliceError(err)
+    }
+}
+
+impl convert::From<bitcoin::secp256k1::scalar::OutOfRangeError> for Error {
+    fn from(err: bitcoin::secp256k1::scalar::OutOfRangeError) -> Error {
+        Error::OutOfRangeError(err)
     }
 }

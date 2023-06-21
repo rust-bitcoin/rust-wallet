@@ -320,19 +320,20 @@ mod test {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-use bitcoin::hashes::hex::FromHex;
     use bitcoin::blockdata::constants::genesis_block;
     use bitcoin::blockdata::script::Builder;
+    use bitcoin::hashes::{hex::FromHex, Hash};
     use bitcoin::util::bip32::ExtendedPubKey;
     use bitcoin::{
-        network::constants::Network, Address, Block, BlockHeader, OutPoint,
-        Transaction, TxIn, TxOut,
+        network::constants::Network, Address, Block, BlockHeader, OutPoint, PackedLockTime,
+        Sequence, Transaction, TxIn, TxOut,
     };
 
     use account::{Account, AccountAddressType, MasterAccount, Unlocker};
     use coins::Coins;
 
     const NEW_COINS: u64 = 5000000000;
+    const ZERO_LOCK_TIME: PackedLockTime = PackedLockTime(0);
 
     fn new_block(prev: &bitcoin::BlockHash) -> Block {
         Block {
@@ -345,7 +346,7 @@ use bitcoin::hashes::hex::FromHex;
                 nonce: 0,
                 bits: 0x1d00ffff,
                 prev_blockhash: prev.clone(),
-                merkle_root: bitcoin::TxMerkleNode::default(),
+                merkle_root: bitcoin::TxMerkleNode::all_zeros(),
             },
             txdata: Vec::new(),
         }
@@ -354,12 +355,12 @@ use bitcoin::hashes::hex::FromHex;
     fn coin_base(miner: Address, height: u32) -> Transaction {
         Transaction {
             version: 2,
-            lock_time: 0,
+            lock_time: ZERO_LOCK_TIME,
             input: vec![TxIn {
-                sequence: 0xffffffff,
-                witness: Vec::new(),
+                sequence: Sequence(0xffffffff),
+                witness: bitcoin::Witness::default(),
                 previous_output: OutPoint {
-                    txid: bitcoin::Txid::default(),
+                    txid: bitcoin::Txid::all_zeros(),
                     vout: 0,
                 },
                 script_sig: Builder::new().push_int(height as i64).into_script(),
@@ -373,7 +374,7 @@ use bitcoin::hashes::hex::FromHex;
 
     fn add_tx(block: &mut Block, tx: Transaction) {
         block.txdata.push(tx);
-        block.header.merkle_root = block.merkle_root();
+        block.header.merkle_root = block.compute_merkle_root().unwrap();
     }
 
     fn new_master() -> MasterAccount {
